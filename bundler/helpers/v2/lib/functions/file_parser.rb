@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "uri"
+
 module Functions
   class FileParser
     def initialize(lockfile_name:)
@@ -11,14 +13,14 @@ module Functions
     def parsed_gemfile(gemfile_name:)
       Bundler::Definition.build(gemfile_name, nil, {}).
         dependencies.select(&:current_platform?).
-        reject { |dep| dep.source.is_a?(Bundler::Source::Gemspec) }.
-        map(&method(:serialize_bundler_dependency))
+        reject { |dep| local_sources.include?(dep.source.class) }.
+        map { |dep| serialize_bundler_dependency(dep) }
     end
 
     def parsed_gemspec(gemspec_name:)
       Bundler.load_gemspec_uncached(gemspec_name).
         dependencies.
-        map(&method(:serialize_bundler_dependency))
+        map { |dep| serialize_bundler_dependency(dep) }
     end
 
     private
@@ -61,20 +63,26 @@ module Functions
       details
     end
 
-    # TODO: Remove default `master` branch
     def git_source_details(source)
       {
         url: source.uri,
-        branch: source.branch || "master",
-        ref: source.ref || "master"
+        branch: source.branch,
+        ref: source.ref
       }
     end
+
+    RUBYGEMS_HOSTS = [
+      "rubygems.org",
+      "www.rubygems.org"
+    ].freeze
 
     def default_rubygems?(source)
       return true if source.nil?
       return false unless source.is_a?(Bundler::Source::Rubygems)
 
-      source.remotes.any? { |r| r.to_s.include?("rubygems.org") }
+      source.remotes.any? do |r|
+        RUBYGEMS_HOSTS.include?(URI(r.to_s).host)
+      end
     end
 
     def serialize_bundler_dependency(dependency)
@@ -95,9 +103,15 @@ module Functions
         NilClass,
         Bundler::Source::Rubygems,
         Bundler::Source::Git,
-        Bundler::Source::Path,
-        Bundler::Source::Gemspec,
+        *local_sources,
         Bundler::Source::Metadata
+      ]
+    end
+
+    def local_sources
+      [
+        Bundler::Source::Path,
+        Bundler::Source::Gemspec
       ]
     end
   end

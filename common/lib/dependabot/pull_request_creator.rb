@@ -48,8 +48,8 @@ module Dependabot
                 :custom_labels, :author_details, :signature_key,
                 :commit_message_options, :vulnerabilities_fixed,
                 :reviewers, :assignees, :milestone, :branch_name_separator,
-                :branch_name_prefix, :github_redirection_service,
-                :custom_headers, :provider_metadata
+                :branch_name_prefix, :branch_name_max_length, :github_redirection_service,
+                :custom_headers, :provider_metadata, :dependency_group
 
     def initialize(source:, base_commit:, dependencies:, files:, credentials:,
                    pr_message_header: nil, pr_message_footer: nil,
@@ -57,10 +57,11 @@ module Dependabot
                    commit_message_options: {}, vulnerabilities_fixed: {},
                    reviewers: nil, assignees: nil, milestone: nil,
                    branch_name_separator: "/", branch_name_prefix: "dependabot",
-                   label_language: false, automerge_candidate: false,
+                   branch_name_max_length: nil, label_language: false,
+                   automerge_candidate: false,
                    github_redirection_service: DEFAULT_GITHUB_REDIRECTION_SERVICE,
                    custom_headers: nil, require_up_to_date_base: false,
-                   provider_metadata: {}, message: nil)
+                   provider_metadata: {}, message: nil, dependency_group: nil)
       @dependencies               = dependencies
       @source                     = source
       @base_commit                = base_commit
@@ -78,6 +79,7 @@ module Dependabot
       @vulnerabilities_fixed      = vulnerabilities_fixed
       @branch_name_separator      = branch_name_separator
       @branch_name_prefix         = branch_name_prefix
+      @branch_name_max_length     = branch_name_max_length
       @label_language             = label_language
       @automerge_candidate        = automerge_candidate
       @github_redirection_service = github_redirection_service
@@ -85,6 +87,7 @@ module Dependabot
       @require_up_to_date_base    = require_up_to_date_base
       @provider_metadata          = provider_metadata
       @message                    = message
+      @dependency_group           = dependency_group
 
       check_dependencies_have_previous_version
     end
@@ -174,6 +177,8 @@ module Dependabot
         pr_name: message.pr_name,
         author_details: author_details,
         labeler: labeler,
+        reviewers: reviewers,
+        assignees: assignees,
         work_item: provider_metadata&.fetch(:work_item, nil)
       )
     end
@@ -221,7 +226,8 @@ module Dependabot
           pr_message_header: pr_message_header,
           pr_message_footer: pr_message_footer,
           vulnerabilities_fixed: vulnerabilities_fixed,
-          github_redirection_service: github_redirection_service
+          github_redirection_service: github_redirection_service,
+          dependency_group: dependency_group
         )
     end
 
@@ -231,8 +237,10 @@ module Dependabot
           dependencies: dependencies,
           files: files,
           target_branch: source.branch,
+          dependency_group: dependency_group,
           separator: branch_name_separator,
-          prefix: branch_name_prefix
+          prefix: branch_name_prefix,
+          max_length: branch_name_max_length
         )
     end
 

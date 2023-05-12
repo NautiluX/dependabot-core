@@ -3,8 +3,8 @@
 module Dependabot
   module Bundler
     module Helpers
-      V1 = "1.17.3"
-      V2 = "2.3.10"
+      V1 = "1"
+      V2 = "2"
       # If we are updating a project with no Gemfile.lock, we default to the
       # newest version we support
       DEFAULT = V2
@@ -13,7 +13,7 @@ module Dependabot
       # it was created with an old version that didn't add this information
       FAILOVER = V1
 
-      BUNDLER_MAJOR_VERSION_REGEX = /BUNDLED WITH\s+(?<version>\d+)\./m.freeze
+      BUNDLER_MAJOR_VERSION_REGEX = /BUNDLED WITH\s+(?<version>\d+)\./m
 
       def self.bundler_version(lockfile)
         return DEFAULT unless lockfile

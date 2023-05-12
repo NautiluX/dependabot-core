@@ -63,8 +63,8 @@ RSpec.describe Dependabot::Elm::UpdateChecker do
       let(:string_req) { "3.0.0 <= v <= 3.0.1" }
       let(:dependency_version) { nil }
       let(:elm_package_url) do
-        "https://package.elm-lang.org/packages/mercurymedia/elm-datetime-picker/"\
-        "releases.json"
+        "https://package.elm-lang.org/packages/mercurymedia/elm-datetime-picker/" \
+          "releases.json"
       end
       let(:elm_package_response) do
         fixture("elm_package_responses", "mercurymedia-elm-datetime-picker.json")
@@ -101,7 +101,10 @@ RSpec.describe Dependabot::Elm::UpdateChecker do
           to_return(status: 200, body: elm_package_response)
       end
 
-      it { is_expected.to eq(true) }
+      it "is true" do
+        pending "skipped due to https://github.com/dependabot/dependabot-core/issues/7006"
+        is_expected.to eq(true)
+      end
     end
 
     context "with a requirement that is out of date, but needs a full unlock" do

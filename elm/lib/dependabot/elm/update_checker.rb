@@ -3,7 +3,7 @@
 require "excon"
 require "dependabot/update_checkers"
 require "dependabot/update_checkers/base"
-require "dependabot/shared_helpers"
+require "dependabot/registry_client"
 require "dependabot/errors"
 
 module Dependabot
@@ -87,10 +87,10 @@ module Dependabot
       end
 
       def filter_lower_versions(versions_array)
-        return versions_array unless dependency.version && version_class.correct?(dependency.version)
+        return versions_array unless current_version
 
         versions_array.
-          select { |version| version > version_class.new(dependency.version) }
+          select { |version| version > current_version }
       end
 
       def all_versions
@@ -98,11 +98,8 @@ module Dependabot
 
         @version_lookup_attempted = true
 
-        response = Excon.get(
-          "https://package.elm-lang.org/packages/#{dependency.name}/"\
-          "releases.json",
-          idempotent: true,
-          **Dependabot::SharedHelpers.excon_defaults
+        response = Dependabot::RegistryClient.get(
+          url: "https://package.elm-lang.org/packages/#{dependency.name}/releases.json"
         )
 
         return @all_versions = [] unless response.status == 200

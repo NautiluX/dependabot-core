@@ -32,6 +32,7 @@ module Dependabot
         fetched_files += packages_config_files
         fetched_files += nuget_config_files
         fetched_files << global_json if global_json
+        fetched_files << dotnet_tools_json if dotnet_tools_json
         fetched_files << packages_props if packages_props
 
         fetched_files = fetched_files.uniq
@@ -73,11 +74,11 @@ module Dependabot
           [*project_files.map { |f| File.dirname(f.name) }, "."].uniq
 
         @packages_config_files ||=
-          candidate_paths.map do |dir|
+          candidate_paths.filter_map do |dir|
             file = repo_contents(dir: dir).
                    find { |f| f.name.casecmp("packages.config").zero? }
             fetch_file_from_host(File.join(dir, file.name)) if file
-          end.compact
+          end
       end
 
       # rubocop:disable Metrics/PerceivedComplexity
@@ -157,7 +158,7 @@ module Dependabot
                 project_paths
             end
 
-            paths.map do |path|
+            paths.filter_map do |path|
               fetch_file_from_host(path)
             rescue Dependabot::DependencyFileNotFound => e
               @missing_sln_project_file_errors ||= []
@@ -165,7 +166,7 @@ module Dependabot
               # Don't worry about missing files too much for now (at least
               # until we start resolving properties)
               nil
-            end.compact
+            end
           end
       end
 
@@ -209,16 +210,22 @@ module Dependabot
           [*project_files.map { |f| File.dirname(f.name) }, "."].uniq
 
         @nuget_config_files ||=
-          candidate_paths.map do |dir|
+          candidate_paths.filter_map do |dir|
             file = repo_contents(dir: dir).
                    find { |f| f.name.casecmp("nuget.config").zero? }
             file = fetch_file_from_host(File.join(dir, file.name)) if file
             file&.tap { |f| f.support_file = true }
-          end.compact
+          end
       end
 
       def global_json
         @global_json ||= fetch_file_if_present("global.json")
+      end
+
+      def dotnet_tools_json
+        @dotnet_tools_json ||= fetch_file_if_present(".config/dotnet-tools.json")
+      rescue Dependabot::DependencyFileNotFound
+        nil
       end
 
       def packages_props

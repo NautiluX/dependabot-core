@@ -2,6 +2,7 @@
 /.env
 /.envrc
 /.git
+/.github
 /.vscode-server-insiders/
 /.vscode-server/
 /.vscode/
@@ -13,8 +14,14 @@
 **/.bundle
 **/coverage
 **/Gemfile.lock
+!updater/Gemfile.lock
+!updater/spec/fixtures/**/Gemfile.lock
 **/node_modules
 !**/spec/fixtures/*
 git.store
 .DS_Store
 *.pyc
+.dockerignore
+Dockerfile*
+*.md
+CODEOWNERS

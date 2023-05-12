@@ -3,6 +3,7 @@
 require "excon"
 require "toml-rb"
 require "open3"
+require "uri"
 require "dependabot/dependency"
 require "dependabot/errors"
 require "dependabot/shared_helpers"
@@ -23,18 +24,30 @@ module Dependabot
       # This class does version resolution for pyproject.toml files.
       class PoetryVersionResolver
         GIT_REFERENCE_NOT_FOUND_REGEX = /
-          'git'.*pypoetry-git-(?<name>.+?).{8}',
+          (?:'git'.*pypoetry-git-(?<name>.+?).{8}',
           'checkout',
           '(?<tag>.+?)'
-        /x.freeze
+          |
+          Failed to checkout
+          (?<tag>.+?)
+          (?<url>.+?).git at '(?<tag>.+?)'
+          |
+          ...Failedtoclone
+          (?<url>.+?).gitat'(?<tag>.+?)',
+          verifyrefexistsonremote)
+        /x # TODO: remove the first clause and | when py3.6 support is EoL
         GIT_DEPENDENCY_UNREACHABLE_REGEX = /
-            '\['git',
-            \s+'clone',
-            \s+'--recurse-submodules',
-            \s+'(--)?',
-            \s+'(?<url>.+?)'.*
-            \s+exit\s+status\s+128
-          /mx.freeze
+          (?:'\['git',
+          \s+'clone',
+          \s+'--recurse-submodules',
+          \s+'(--)?',
+          \s+'(?<url>.+?)'.*
+          \s+exit\s+status\s+128
+          |
+          \s+Failed\sto\sclone
+          \s+(?<url>.+?),
+          \s+check\syour\sgit\sconfiguration)
+        /mx # TODO: remove the first clause and | when py3.6 support is EoL
 
         attr_reader :dependency, :dependency_files, :credentials
 
@@ -61,7 +74,8 @@ module Dependabot
                                    false
                                  end
         rescue SharedHelpers::HelperSubprocessFailed => e
-          raise unless e.message.include?("SolverProblemError")
+          raise unless e.message.include?("SolverProblemError") || # TODO: Remove once py3.6 is EoL
+                       e.message.include?("version solving failed.")
 
           @resolvable[version] = false
         end
@@ -76,17 +90,17 @@ module Dependabot
             SharedHelpers.in_a_temporary_directory do
               SharedHelpers.with_git_configured(credentials: credentials) do
                 write_temporary_dependency_files(updated_req: requirement)
+                add_auth_env_vars
 
-                if python_version && !pre_installed_python?(python_version)
-                  run_poetry_command("pyenv install -s #{python_version}")
-                  run_poetry_command(
-                    "pyenv exec pip install -r "\
-                    "#{NativeHelpers.python_requirements_path}"
-                  )
+                language_version_manager.install_required_python
+
+                # use system git instead of the pure Python dulwich
+                unless language_version_manager.python_version&.start_with?("3.6")
+                  run_poetry_command("pyenv exec poetry config experimental.system-git-client true")
                 end
 
                 # Shell out to Poetry, which handles everything for us.
-                run_poetry_command(poetry_update_command)
+                run_poetry_update_command
 
                 updated_lockfile =
                   if File.exist?("poetry.lock") then File.read("poetry.lock")
@@ -116,8 +130,13 @@ module Dependabot
         def handle_poetry_errors(error)
           if error.message.gsub(/\s/, "").match?(GIT_REFERENCE_NOT_FOUND_REGEX)
             message = error.message.gsub(/\s/, "")
-            name = message.match(GIT_REFERENCE_NOT_FOUND_REGEX).
-                   named_captures.fetch("name")
+            match = message.match(GIT_REFERENCE_NOT_FOUND_REGEX)
+            name = if (url = match.named_captures.fetch("url"))
+                     File.basename(URI.parse(url).path)
+                   else
+                     message.match(GIT_REFERENCE_NOT_FOUND_REGEX).
+                       named_captures.fetch("name")
+                   end
             raise GitDependencyReferenceNotFound, name
           end
 
@@ -128,7 +147,8 @@ module Dependabot
           end
 
           raise unless error.message.include?("SolverProblemError") ||
-                       error.message.include?("PackageNotFound")
+                       error.message.include?("PackageNotFound") ||
+                       error.message.include?("version solving failed.")
 
           check_original_requirements_resolvable
 
@@ -143,8 +163,11 @@ module Dependabot
 
         # Using `--lock` avoids doing an install.
         # Using `--no-interaction` avoids asking for passwords.
-        def poetry_update_command
-          "pyenv exec poetry update #{dependency.name} --lock --no-interaction"
+        def run_poetry_update_command
+          run_poetry_command(
+            "pyenv exec poetry update #{dependency.name} --lock --no-interaction",
+            fingerprint: "pyenv exec poetry update <dependency_name> --lock --no-interaction"
+          )
         end
 
         def check_original_requirements_resolvable
@@ -154,12 +177,13 @@ module Dependabot
             SharedHelpers.with_git_configured(credentials: credentials) do
               write_temporary_dependency_files(update_pyproject: false)
 
-              run_poetry_command(poetry_update_command)
+              run_poetry_update_command
 
               @original_reqs_resolvable = true
             rescue SharedHelpers::HelperSubprocessFailed => e
               raise unless e.message.include?("SolverProblemError") ||
-                           e.message.include?("PackageNotFound")
+                           e.message.include?("PackageNotFound") ||
+                           e.message.include?("version solving failed.")
 
               msg = clean_error_message(e.message)
               raise DependencyFileNotResolvable, msg
@@ -181,7 +205,7 @@ module Dependabot
           end
 
           # Overwrite the .python-version with updated content
-          File.write(".python-version", python_version) if python_version
+          File.write(".python-version", language_version_manager.python_major_minor)
 
           # Overwrite the pyproject with updated content
           if update_pyproject
@@ -194,40 +218,16 @@ module Dependabot
           end
         end
 
-        def python_version
-          requirements = python_requirement_parser.user_specified_requirements
-          requirements = requirements.
-                         map { |r| Python::Requirement.requirements_array(r) }
-
-          version = PythonVersions::SUPPORTED_VERSIONS_TO_ITERATE.find do |v|
-            requirements.all? do |reqs|
-              reqs.any? { |r| r.satisfied_by?(Python::Version.new(v)) }
-            end
-          end
-          return version if version
-
-          msg = "Dependabot detected the following Python requirements "\
-                "for your project: '#{requirements}'.\n\nCurrently, the "\
-                "following Python versions are supported in Dependabot: "\
-                "#{PythonVersions::SUPPORTED_VERSIONS.join(', ')}."
-          raise DependencyFileNotResolvable, msg
-        end
-
-        def python_requirement_parser
-          @python_requirement_parser ||=
-            FileParser::PythonRequirementParser.new(
-              dependency_files: dependency_files
-            )
-        end
-
-        def pre_installed_python?(version)
-          PythonVersions::PRE_INSTALLED_PYTHON_VERSIONS.include?(version)
+        def add_auth_env_vars
+          Python::FileUpdater::PyprojectPreparer.
+            new(pyproject_content: pyproject.content).
+            add_auth_env_vars(credentials)
         end
 
         def updated_pyproject_content(updated_requirement:)
           content = pyproject.content
           content = sanitize_pyproject_content(content)
-          content = add_private_sources(content)
+          content = update_python_requirement(content)
           content = freeze_other_dependencies(content)
           content = set_target_dependency_req(content, updated_requirement)
           content
@@ -236,7 +236,7 @@ module Dependabot
         def sanitized_pyproject_content
           content = pyproject.content
           content = sanitize_pyproject_content(content)
-          content = add_private_sources(content)
+          content = update_python_requirement(content)
           content
         end
 
@@ -246,10 +246,10 @@ module Dependabot
             sanitize
         end
 
-        def add_private_sources(pyproject_content)
+        def update_python_requirement(pyproject_content)
           Python::FileUpdater::PyprojectPreparer.
             new(pyproject_content: pyproject_content).
-            replace_sources(credentials)
+            update_python_requirement(language_version_manager.python_major_minor)
         end
 
         def freeze_other_dependencies(pyproject_content)
@@ -258,23 +258,22 @@ module Dependabot
             freeze_top_level_dependencies_except([dependency])
         end
 
-        # rubocop:disable Metrics/PerceivedComplexity
         def set_target_dependency_req(pyproject_content, updated_requirement)
           return pyproject_content unless updated_requirement
 
           pyproject_object = TomlRB.parse(pyproject_content)
           poetry_object = pyproject_object.dig("tool", "poetry")
 
-          Dependabot::Python::FileParser::PoetryFilesParser::POETRY_DEPENDENCY_TYPES.each do |type|
-            names = poetry_object[type]&.keys || []
-            pkg_name = names.find { |nm| normalise(nm) == dependency.name }
-            next unless pkg_name
+          Dependabot::Python::FileParser::PyprojectFilesParser::POETRY_DEPENDENCY_TYPES.each do |type|
+            dependencies = poetry_object[type]
+            next unless dependencies
 
-            if poetry_object.dig(type, pkg_name).is_a?(Hash)
-              poetry_object[type][pkg_name]["version"] = updated_requirement
-            else
-              poetry_object[type][pkg_name] = updated_requirement
-            end
+            update_dependency_requirement(dependencies, updated_requirement)
+          end
+
+          groups = poetry_object["group"]&.values || []
+          groups.each do |group_spec|
+            update_dependency_requirement(group_spec["dependencies"], updated_requirement)
           end
 
           # If this is a sub-dependency, add the new requirement
@@ -285,7 +284,18 @@ module Dependabot
 
           TomlRB.dump(pyproject_object)
         end
-        # rubocop:enable Metrics/PerceivedComplexity
+
+        def update_dependency_requirement(toml_node, requirement)
+          names = toml_node.keys
+          pkg_name = names.find { |nm| normalise(nm) == dependency.name }
+          return unless pkg_name
+
+          if toml_node[pkg_name].is_a?(Hash)
+            toml_node[pkg_name]["version"] = requirement
+          else
+            toml_node[pkg_name] = requirement
+          end
+        end
 
         def subdep_type
           category =
@@ -294,6 +304,20 @@ module Dependabot
             fetch("category")
 
           category == "dev" ? "dev-dependencies" : "dependencies"
+        end
+
+        def python_requirement_parser
+          @python_requirement_parser ||=
+            FileParser::PythonRequirementParser.new(
+              dependency_files: dependency_files
+            )
+        end
+
+        def language_version_manager
+          @language_version_manager ||=
+            LanguageVersionManager.new(
+              python_requirement_parser: python_requirement_parser
+            )
         end
 
         def pyproject
@@ -312,13 +336,13 @@ module Dependabot
           poetry_lock || pyproject_lock
         end
 
-        def run_poetry_command(command)
+        def run_poetry_command(command, fingerprint: nil)
           start = Time.now
           command = SharedHelpers.escape_command(command)
           stdout, process = Open3.capture2e(command)
           time_taken = Time.now - start
 
-          # Raise an error with the output from the shell session if Pipenv
+          # Raise an error with the output from the shell session if poetry
           # returns a non-zero status
           return if process.success?
 
@@ -326,6 +350,7 @@ module Dependabot
             message: stdout,
             error_context: {
               command: command,
+              fingerprint: fingerprint,
               time_taken: time_taken,
               process_exit_value: process.to_s
             }

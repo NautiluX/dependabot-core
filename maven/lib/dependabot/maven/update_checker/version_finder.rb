@@ -1,13 +1,13 @@
 # frozen_string_literal: true
 
 require "nokogiri"
-require "dependabot/shared_helpers"
 require "dependabot/update_checkers/version_filters"
 require "dependabot/maven/file_parser/repositories_finder"
 require "dependabot/maven/update_checker"
 require "dependabot/maven/version"
 require "dependabot/maven/requirement"
 require "dependabot/maven/utils/auth_headers_finder"
+require "dependabot/registry_client"
 
 module Dependabot
   module Maven
@@ -25,6 +25,7 @@ module Dependabot
           @raise_on_ignored    = raise_on_ignored
           @security_advisories = security_advisories
           @forbidden_urls      = []
+          @dependency_metadata = {}
         end
 
         def latest_version_details
@@ -56,8 +57,10 @@ module Dependabot
           version_details =
             repositories.map do |repository_details|
               url = repository_details.fetch("url")
-              dependency_metadata(repository_details).
-                css("versions > version").
+              xml = dependency_metadata(repository_details)
+              next [] if xml.nil?
+
+              break xml.css("versions > version").
                 select { |node| version_class.correct?(node.content) }.
                 map { |node| version_class.new(node.content) }.
                 map { |version| { version: version, source_url: url } }
@@ -110,25 +113,23 @@ module Dependabot
         end
 
         def filter_lower_versions(possible_versions)
-          return possible_versions unless dependency.version && version_class.correct?(dependency.version)
+          return possible_versions unless dependency.numeric_version
 
           possible_versions.select do |v|
-            v.fetch(:version) > version_class.new(dependency.version)
+            v.fetch(:version) > dependency.numeric_version
           end
         end
 
         def wants_prerelease?
-          return false unless dependency.version
-          return false unless version_class.correct?(dependency.version)
+          return false unless dependency.numeric_version
 
-          version_class.new(dependency.version).prerelease?
+          dependency.numeric_version.prerelease?
         end
 
         def wants_date_based_version?
-          return false unless dependency.version
-          return false unless version_class.correct?(dependency.version)
+          return false unless dependency.numeric_version
 
-          version_class.new(dependency.version) >= version_class.new(100)
+          dependency.numeric_version >= version_class.new(100)
         end
 
         def released?(version)
@@ -138,10 +139,9 @@ module Dependabot
           @released_check[version] =
             repositories.any? do |repository_details|
               url = repository_details.fetch("url")
-              response = Excon.head(
-                dependency_files_url(url, version),
-                idempotent: true,
-                **SharedHelpers.excon_defaults(headers: repository_details.fetch("auth_headers"))
+              response = Dependabot::RegistryClient.head(
+                url: dependency_files_url(url, version),
+                headers: repository_details.fetch("auth_headers")
               )
 
               response.status < 400
@@ -154,25 +154,28 @@ module Dependabot
         end
 
         def dependency_metadata(repository_details)
-          @dependency_metadata ||= {}
-          @dependency_metadata[repository_details.hash] ||=
-            begin
-              response = Excon.get(
-                dependency_metadata_url(repository_details.fetch("url")),
-                idempotent: true,
-                **Dependabot::SharedHelpers.excon_defaults(headers: repository_details.fetch("auth_headers"))
-              )
-              check_response(response, repository_details.fetch("url"))
+          repository_key = repository_details.hash
+          return @dependency_metadata[repository_key] if @dependency_metadata.key?(repository_key)
 
-              Nokogiri::XML(response.body)
-            rescue URI::InvalidURIError
-              Nokogiri::XML("")
-            rescue Excon::Error::Socket, Excon::Error::Timeout,
-                   Excon::Error::TooManyRedirects
-              raise if central_repo_urls.include?(repository_details["url"])
+          @dependency_metadata[repository_key] = fetch_dependency_metadata(repository_details)
+        end
 
-              Nokogiri::XML("")
-            end
+        def fetch_dependency_metadata(repository_details)
+          response = Dependabot::RegistryClient.get(
+            url: dependency_metadata_url(repository_details.fetch("url")),
+            headers: repository_details.fetch("auth_headers")
+          )
+          check_response(response, repository_details.fetch("url"))
+          return unless response.status < 400
+
+          Nokogiri::XML(response.body)
+        rescue URI::InvalidURIError
+          nil
+        rescue Excon::Error::Socket, Excon::Error::Timeout,
+               Excon::Error::TooManyRedirects
+          raise if central_repo_urls.include?(repository_details["url"])
+
+          nil
         end
 
         def check_response(response, repository_url)
@@ -184,23 +187,27 @@ module Dependabot
         end
 
         def repositories
-          return @repositories if @repositories
+          return @repositories if defined?(@repositories)
 
-          details = pom_repository_details + credentials_repository_details
+          @repositories = credentials_repository_details
+          pom_repository_details.each do |repo|
+            @repositories << repo unless @repositories.any? { |r| r["url"] == repo["url"] }
+          end
+          @repositories
+        end
 
-          @repositories =
-            details.reject do |repo|
-              next if repo["auth_headers"]
-
-              # Reject this entry if an identical one with non-empty auth_headers exists
-              details.any? { |r| r["url"] == repo["url"] && r["auth_headers"] != {} }
-            end
+        def repository_finder
+          @repository_finder ||=
+            Maven::FileParser::RepositoriesFinder.new(
+              pom_fetcher: Maven::FileParser::PomFetcher.new(dependency_files: dependency_files),
+              dependency_files: dependency_files,
+              credentials: credentials
+            )
         end
 
         def pom_repository_details
           @pom_repository_details ||=
-            Maven::FileParser::RepositoriesFinder.
-            new(dependency_files: dependency_files).
+            repository_finder.
             repository_urls(pom: pom).
             map do |url|
               { "url" => url, "auth_headers" => {} }
@@ -246,10 +253,10 @@ module Dependabot
         def dependency_metadata_url(repository_url)
           group_id, artifact_id, _classifier = dependency.name.split(":")
 
-          "#{repository_url}/"\
-          "#{group_id.tr('.', '/')}/"\
-          "#{artifact_id}/"\
-          "maven-metadata.xml"
+          "#{repository_url}/" \
+            "#{group_id.tr('.', '/')}/" \
+            "#{artifact_id}/" \
+            "maven-metadata.xml"
         end
 
         def dependency_files_url(repository_url, version)
@@ -258,21 +265,19 @@ module Dependabot
                  dig(:metadata, :packaging_type)
 
           actual_classifier = classifier.nil? ? "" : "-#{classifier}"
-          "#{repository_url}/"\
-          "#{group_id.tr('.', '/')}/"\
-          "#{artifact_id}/"\
-          "#{version}/"\
-          "#{artifact_id}-#{version}#{actual_classifier}.#{type}"
+          "#{repository_url}/" \
+            "#{group_id.tr('.', '/')}/" \
+            "#{artifact_id}/" \
+            "#{version}/" \
+            "#{artifact_id}-#{version}#{actual_classifier}.#{type}"
         end
 
         def version_class
-          Maven::Version
+          dependency.version_class
         end
 
         def central_repo_urls
-          central_url_without_protocol =
-            Maven::FileParser::RepositoriesFinder::CENTRAL_REPO_URL.
-            gsub(%r{^.*://}, "")
+          central_url_without_protocol = repository_finder.central_repo_url.gsub(%r{^.*://}, "")
 
           %w(http:// https://).map { |p| p + central_url_without_protocol }
         end

@@ -8,7 +8,8 @@ RSpec.describe Dependabot::NpmAndYarn::FileUpdater::YarnLockfileUpdater do
     described_class.new(
       dependency_files: files,
       dependencies: dependencies,
-      credentials: credentials
+      credentials: credentials,
+      repo_contents_path: nil
     )
   end
   let(:dependencies) { [dependency] }
@@ -54,7 +55,7 @@ RSpec.describe Dependabot::NpmAndYarn::FileUpdater::YarnLockfileUpdater do
 
   let(:tmp_path) { Dependabot::Utils::BUMP_TMP_DIR_PATH }
 
-  before { Dir.mkdir(tmp_path) unless Dir.exist?(tmp_path) }
+  before { FileUtils.mkdir_p(tmp_path)  }
 
   subject(:updated_yarn_lock_content) { updater.updated_yarn_lock_content(yarn_lock) }
 
@@ -79,8 +80,8 @@ RSpec.describe Dependabot::NpmAndYarn::FileUpdater::YarnLockfileUpdater do
           groups: ["dependencies"],
           source: {
             type: "git",
-            url: "https://github.com/dependabot-fixtures/"\
-            "test-missing-dep-name-npm-package",
+            url: "https://github.com/dependabot-fixtures/" \
+                 "test-missing-dep-name-npm-package",
             branch: nil,
             ref: ref
           }
@@ -93,8 +94,8 @@ RSpec.describe Dependabot::NpmAndYarn::FileUpdater::YarnLockfileUpdater do
           groups: ["dependencies"],
           source: {
             type: "git",
-            url: "https://github.com/dependabot-fixtures/"\
-            "test-missing-dep-name-npm-package",
+            url: "https://github.com/dependabot-fixtures/" \
+                 "test-missing-dep-name-npm-package",
             branch: nil,
             ref: old_ref
           }
@@ -161,14 +162,15 @@ RSpec.describe Dependabot::NpmAndYarn::FileUpdater::YarnLockfileUpdater do
     context "with a registry that times out" do
       let(:files) { project_dependency_files("yarn/simple_with_registry_that_times_out") }
 
-      # This test is extremely slow (it takes 1m45 to run) so should only be
-      # run locally.
-      # it "raises a helpful error" do
-      #   expect { updated_yarn_lock_content }.
-      #     to raise_error(Dependabot::PrivateSourceTimedOut) do |error|
-      #       expect(error.source).to eq("timeout.cv/repository/mirror")
-      #     end
-      # end
+      it "raises a helpful error" do
+        skip("This test is extremely slow (1m45s) so only run locally. TODO: stub a custom timeout value.")
+        # TODO: stub a custom short timeout via the .yarnrc file:
+        # https://azureossd.github.io/2022/09/10/fix-yarn-ESOCKETTIMEDOUT-with-.yarnrc-configuration-file/
+        expect { updated_yarn_lock_content }.
+          to raise_error(Dependabot::PrivateSourceTimedOut) do |error|
+            expect(error.source).to eq("timeout.cv/repository/mirror")
+          end
+      end
     end
 
     context "when scoped sub dependency version is missing" do
@@ -186,8 +188,8 @@ RSpec.describe Dependabot::NpmAndYarn::FileUpdater::YarnLockfileUpdater do
           groups: ["dependencies"],
           source: {
             type: "git",
-            url: "https://github.com/dependabot-fixtures/"\
-            "test-missing-scoped-dep-version-npm-package",
+            url: "https://github.com/dependabot-fixtures/" \
+                 "test-missing-scoped-dep-version-npm-package",
             branch: nil,
             ref: ref
           }
@@ -200,8 +202,8 @@ RSpec.describe Dependabot::NpmAndYarn::FileUpdater::YarnLockfileUpdater do
           groups: ["dependencies"],
           source: {
             type: "git",
-            url: "https://github.com/dependabot-fixtures/"\
-            "test-missing-scoped-dep-version-npm-package",
+            url: "https://github.com/dependabot-fixtures/" \
+                 "test-missing-scoped-dep-version-npm-package",
             branch: nil,
             ref: old_ref
           }
@@ -229,8 +231,8 @@ RSpec.describe Dependabot::NpmAndYarn::FileUpdater::YarnLockfileUpdater do
           groups: ["dependencies"],
           source: {
             type: "git",
-            url: "https://github.com/dependabot-fixtures/"\
-            "test-missing-dep-version-npm-package",
+            url: "https://github.com/dependabot-fixtures/" \
+                 "test-missing-dep-version-npm-package",
             branch: nil,
             ref: ref
           }
@@ -243,8 +245,8 @@ RSpec.describe Dependabot::NpmAndYarn::FileUpdater::YarnLockfileUpdater do
           groups: ["dependencies"],
           source: {
             type: "git",
-            url: "https://github.com/dependabot-fixtures/"\
-            "test-missing-dep-version-npm-package",
+            url: "https://github.com/dependabot-fixtures/" \
+                 "test-missing-dep-version-npm-package",
             branch: nil,
             ref: old_ref
           }

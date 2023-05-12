@@ -32,6 +32,9 @@ RSpec.describe Dependabot::Pub::UpdateChecker do
         res.body = File.read(File.join("..", "..", f))
       end
     end
+    @server.mount_proc "/flutter_releases.json" do |_req, res|
+      res.body = File.read(File.join(__dir__, "..", "..", "fixtures", "flutter_releases.json"))
+    end
   end
 
   after do
@@ -56,15 +59,18 @@ RSpec.describe Dependabot::Pub::UpdateChecker do
       }],
       ignored_versions: ignored_versions,
       options: {
-        pub_hosted_url: "http://localhost:#{@server[:Port]}"
+        pub_hosted_url: "http://localhost:#{@server[:Port]}",
+        flutter_releases_url: "http://localhost:#{@server[:Port]}/flutter_releases.json"
       },
       raise_on_ignored: raise_on_ignored,
+      security_advisories: security_advisories,
       requirements_update_strategy: requirements_update_strategy
     )
   end
 
   let(:ignored_versions) { [] }
   let(:raise_on_ignored) { false }
+  let(:security_advisories) { [] }
 
   let(:dependency) do
     Dependabot::Dependency.new(
@@ -86,6 +92,10 @@ RSpec.describe Dependabot::Pub::UpdateChecker do
     files.each do |file|
       # Simulate that the lockfile was from localhost:
       file.content.gsub!("https://pub.dartlang.org", "http://localhost:#{@server[:Port]}")
+      if defined?(git_dir)
+        file.content.gsub!("$GIT_DIR", git_dir)
+        file.content.gsub!("$REF", dependency_version)
+      end
     end
     files
   end
@@ -112,9 +122,9 @@ RSpec.describe Dependabot::Pub::UpdateChecker do
             }],
             "previous_version" => "1.14.13",
             "requirements" => [{
-              file: "pubspec.yaml", groups: ["direct"], requirement: "^1.15.0", source: nil
+              file: "pubspec.yaml", groups: ["direct"], requirement: "^1.16.0", source: nil
             }],
-            "version" => "1.15.0" }
+            "version" => "1.16.0" }
         ]
       end
     end
@@ -132,9 +142,9 @@ RSpec.describe Dependabot::Pub::UpdateChecker do
                 # Dependabot lifts this from the original dependency.
                 "previous_version" => "0.0.0",
                 "requirements" => [{
-                  file: "pubspec.yaml", groups: ["direct"], requirement: "^1.15.0", source: nil
+                  file: "pubspec.yaml", groups: ["direct"], requirement: "^1.16.0", source: nil
                 }],
-                "version" => "1.15.0" }
+                "version" => "1.16.0" }
             ]
           end
         end
@@ -152,7 +162,7 @@ RSpec.describe Dependabot::Pub::UpdateChecker do
                 "requirements" => [{
                   file: "pubspec.yaml", groups: ["direct"], requirement: "^1.14.13", source: nil
                 }],
-                "version" => "1.15.0" }
+                "version" => "1.16.0" }
             ]
           end
         end
@@ -168,9 +178,9 @@ RSpec.describe Dependabot::Pub::UpdateChecker do
               # Dependabot lifts this from the original dependency.
               "previous_version" => "0.0.0",
               "requirements" => [{
-                file: "pubspec.yaml", groups: ["direct"], requirement: "^1.15.0", source: nil
+                file: "pubspec.yaml", groups: ["direct"], requirement: "^1.16.0", source: nil
               }],
-              "version" => "1.15.0" }
+              "version" => "1.16.0" }
           ]
         end
       end
@@ -187,7 +197,7 @@ RSpec.describe Dependabot::Pub::UpdateChecker do
               "requirements" => [{
                 file: "pubspec.yaml", groups: ["direct"], requirement: "^1.14.13", source: nil
               }],
-              "version" => "1.15.0" }
+              "version" => "1.16.0" }
           ]
         end
       end
@@ -205,7 +215,7 @@ RSpec.describe Dependabot::Pub::UpdateChecker do
                 # No widening needed for this update.
                 file: "pubspec.yaml", groups: ["direct"], requirement: "^1.14.13", source: nil
               }],
-              "version" => "1.15.0" }
+              "version" => "1.16.0" }
           ]
         end
       end
@@ -222,19 +232,20 @@ RSpec.describe Dependabot::Pub::UpdateChecker do
             # Dependabot lifts this from the original dependency.
             "previous_version" => "0.0.0",
             "requirements" => [],
-            "version" => "1.15.0" }
+            "version" => "1.16.0" }
         ]
       end
     end
 
     context "will not upgrade to ignored version" do
       let(:requirements_to_unlock) { :none }
-      let(:ignored_versions) { ["1.15.0"] }
+      let(:ignored_versions) { ["1.16.0"] }
       it "cannot update" do
         expect(can_update).to be_falsey
       end
     end
   end
+
   context "given an outdated dependency, requiring unlock" do
     let(:dependency_name) { "retry" }
 
@@ -242,6 +253,24 @@ RSpec.describe Dependabot::Pub::UpdateChecker do
       let(:requirements_to_unlock) { :all }
       context "with auto-strategy" do
         context "app (no version)" do
+          it "can update" do
+            expect(can_update).to be_truthy
+            expect(updated_dependencies).to eq [
+              { "name" => "retry",
+                "package_manager" => "pub",
+                "previous_requirements" => [{
+                  file: "pubspec.yaml", groups: ["direct"], requirement: "^2.0.0", source: nil
+                }],
+                "previous_version" => "2.0.0",
+                "requirements" => [{
+                  file: "pubspec.yaml", groups: ["direct"], requirement: "^3.1.0", source: nil
+                }],
+                "version" => "3.1.0" }
+            ]
+          end
+        end
+        context "app (version but publish_to: none)" do
+          let(:project) { "can_update_publish_to_none" }
           it "can update" do
             expect(can_update).to be_truthy
             expect(updated_dependencies).to eq [
@@ -439,6 +468,81 @@ RSpec.describe Dependabot::Pub::UpdateChecker do
     end
   end
 
+  describe "#lowest_resolvable_security_fix_version" do
+    subject(:lowest_resolvable_security_fix_version) { checker.lowest_resolvable_security_fix_version }
+    let(:dependency_name) { "retry" }
+    let(:security_advisories) do
+      [
+        Dependabot::SecurityAdvisory.new(
+          dependency_name: dependency_name,
+          package_manager: "pub",
+          vulnerable_versions: ["<3.0.0"]
+        )
+      ]
+    end
+
+    context "when a newer non-vulnerable version is available" do
+      # TODO: Implement https://github.com/dependabot/dependabot-core/issues/5391, then flip "highest" to "lowest"
+      it "updates to the highest non-vulnerable version" do
+        is_expected.to eq(Gem::Version.new("3.1.0"))
+      end
+    end
+
+    # TODO: should it update indirect deps for security vulnerabilities? I assume Pub has these?
+    # examples of how to write tests in go_modules/update_checker_spec
+
+    context "when the current version is not newest but also not vulnerable" do
+      let(:dependency_version) { "3.0.0" } # 3.1.0 is latest
+      it "raises an error " do
+        expect { lowest_resolvable_security_fix_version.to }.to raise_error(RuntimeError) do |error|
+          expect(error.message).to eq("Dependency not vulnerable!")
+        end
+      end
+    end
+  end
+
+  describe "#lowest_security_fix_version" do
+    subject(:lowest_security_fix_version) { checker.lowest_security_fix_version }
+    let(:dependency_name) { "retry" }
+
+    # TODO: Implement https://github.com/dependabot/dependabot-core/issues/5391, then flip "highest" to "lowest"
+    it "finds the highest available non-vulnerable version" do
+      is_expected.to eq(Gem::Version.new("3.1.0"))
+    end
+
+    context "with a security vulnerability on older versions" do
+      let(:security_advisories) do
+        [
+          Dependabot::SecurityAdvisory.new(
+            dependency_name: dependency_name,
+            package_manager: "pub",
+            vulnerable_versions: ["< 3.0.0"]
+          )
+        ]
+      end
+
+      # TODO: Implement https://github.com/dependabot/dependabot-core/issues/5391, then flip "highest" to "lowest"
+      it "finds the highest available non-vulnerable version" do
+        is_expected.to eq(Gem::Version.new("3.1.0"))
+      end
+
+      # it "returns nil for git versions" # tested elsewhere under `context "With a git dependency"`
+    end
+
+    context "with a security vulnerability on all newer versions" do
+      let(:security_advisories) do
+        [
+          Dependabot::SecurityAdvisory.new(
+            dependency_name: dependency_name,
+            package_manager: "pub",
+            vulnerable_versions: ["< 4.0.0"]
+          )
+        ]
+      end
+      it { is_expected.to be_nil }
+    end
+  end
+
   context "mono repo" do
     let(:project) { "mono_repo_main_at_root" }
     let(:dependency_name) { "dep" }
@@ -493,6 +597,112 @@ RSpec.describe Dependabot::Pub::UpdateChecker do
       it "raises an error" do
         expect { checker.latest_version }.to raise_error(Dependabot::AllVersionsIgnored)
       end
+    end
+  end
+
+  context "With a git dependency" do
+    include_context :uses_temp_dir
+
+    let(:project) { "git_dependency" }
+
+    let(:git_dir) { File.join(temp_dir, "foo.git") }
+    let(:foo_pubspec) { File.join(git_dir, "pubspec.yaml") }
+
+    let(:dependency_name) { "foo" }
+    let(:dependency_version) do
+      FileUtils.mkdir_p git_dir
+      run_git ["init"], git_dir
+
+      File.write(foo_pubspec, '{"name":"foo", "version": "1.0.0", "environment": {"sdk": "^2.0.0"}}')
+      run_git ["add", "."], git_dir
+      run_git ["commit", "-am", "some commit message"], git_dir
+      ref = run_git(%w(rev-parse HEAD), git_dir).strip
+      ref
+    end
+    let(:requirements_to_unlock) { :all }
+    let(:requirements_update_strategy) { "bump_versions_if_necessary" }
+
+    it "updates to latest git commit" do
+      dependency_version # triggers the initial commit.
+      File.write(foo_pubspec, '{"name":"foo", "version": "2.0.0", "environment": {"sdk": "^2.0.0"}}')
+      run_git ["add", "."], git_dir
+      run_git ["commit", "-am", "some commit message"], git_dir
+      new_ref = run_git(%w(rev-parse HEAD), git_dir).strip
+      expect(can_update).to be_truthy
+      expect(updated_dependencies).to eq [
+        { "name" => "foo",
+          "package_manager" => "pub",
+          "previous_requirements" => [{
+            file: "pubspec.yaml", groups: ["direct"], requirement: "any", source: nil
+          }],
+          "previous_version" => dependency_version,
+          "requirements" => [{
+            file: "pubspec.yaml", groups: ["direct"], requirement: "any", source: nil
+          }],
+          "version" => new_ref }
+      ]
+    end
+
+    context "with a security vulnerability on older versions" do
+      let(:security_advisories) do
+        [
+          Dependabot::SecurityAdvisory.new(
+            dependency_name: dependency_name,
+            package_manager: "pub",
+            vulnerable_versions: ["< 3.0.0"]
+          )
+        ]
+      end
+
+      it "returns no version" do
+        expect(checker.lowest_security_fix_version).to be_nil
+      end
+    end
+  end
+
+  context "works for a flutter project" do
+    include_context :uses_temp_dir
+
+    let(:project) { "requires_flutter" }
+    let(:requirements_to_unlock) { :all }
+    let(:dependency_name) { "retry" }
+    it "can update" do
+      expect(can_update).to be_truthy
+      expect(updated_dependencies).to eq [
+        { "name" => "retry",
+          "package_manager" => "pub",
+          "previous_requirements" => [{
+            file: "pubspec.yaml", groups: ["direct"], requirement: "^2.0.0", source: nil
+          }],
+          "previous_version" => "2.0.0",
+          "requirements" => [{
+            file: "pubspec.yaml", groups: ["direct"], requirement: "^3.1.0", source: nil
+          }],
+          "version" => "3.1.0" }
+      ]
+    end
+  end
+
+  context "works for a flutter project requiring a flutter beta" do
+    include_context :uses_temp_dir
+
+    let(:project) { "requires_latest_beta" }
+    let(:requirements_to_unlock) { :all }
+    let(:dependency_name) { "retry" }
+    it "can update" do
+      expect(can_update).to be_truthy
+      expect(updated_dependencies).to eq [
+        { "name" => "retry",
+          "package_manager" => "pub",
+          "previous_requirements" => [{
+            file: "pubspec.yaml", groups: ["direct"], requirement: "^2.0.0", source: nil
+          }],
+          "previous_version" => "2.0.0",
+          "requirements" => [{
+            file: "pubspec.yaml", groups: ["direct"], requirement: "^3.1.0", source: nil
+          }],
+          "version" => "3.1.0" }
+      ]
     end
   end
 end

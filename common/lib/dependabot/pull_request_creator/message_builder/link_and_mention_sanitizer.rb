@@ -8,17 +8,19 @@ module Dependabot
   class PullRequestCreator
     class MessageBuilder
       class LinkAndMentionSanitizer
-        GITHUB_USERNAME = /[a-z0-9]+(-[a-z0-9]+)*/i.freeze
+        GITHUB_USERNAME = /[a-z0-9]+(-[a-z0-9]+)*/i
         GITHUB_REF_REGEX = %r{
           (?:https?://)?
           github\.com/(?<repo>#{GITHUB_USERNAME}/[^/\s]+)/
           (?:issue|pull)s?/(?<number>\d+)
-        }x.freeze
-        MENTION_REGEX = %r{(?<![A-Za-z0-9`~])@#{GITHUB_USERNAME}/?}.freeze
+        }x
+        # [^/\s#]+ means one or more characters not matching (^) the class /, whitespace (\s), or #
+        GITHUB_NWO_REGEX = %r{(?<repo>#{GITHUB_USERNAME}/[^/\s#]+)#(?<number>\d+)}
+        MENTION_REGEX = %r{(?<![A-Za-z0-9`~])@#{GITHUB_USERNAME}/?}
         # regex to match a team mention on github
-        TEAM_MENTION_REGEX = %r{(?<![A-Za-z0-9`~])@(?<org>#{GITHUB_USERNAME})/(?<team>#{GITHUB_USERNAME})/?}.freeze
+        TEAM_MENTION_REGEX = %r{(?<![A-Za-z0-9`~])@(?<org>#{GITHUB_USERNAME})/(?<team>#{GITHUB_USERNAME})/?}
         # End of string
-        EOS_REGEX = /\z/.freeze
+        EOS_REGEX = /\z/
         COMMONMARKER_OPTIONS = %i(
           GITHUB_PRE_LANG FULL_INFO_STRING
         ).freeze
@@ -32,7 +34,7 @@ module Dependabot
           @github_redirection_service = github_redirection_service
         end
 
-        def sanitize_links_and_mentions(text:, unsafe: false)
+        def sanitize_links_and_mentions(text:, unsafe: false, format_html: true)
           doc = CommonMarker.render_doc(
             text, :LIBERAL_HTML_TAG, COMMONMARKER_EXTENSIONS
           )
@@ -40,8 +42,11 @@ module Dependabot
           sanitize_team_mentions(doc)
           sanitize_mentions(doc)
           sanitize_links(doc)
+          sanitize_nwo_text(doc)
 
           mode = unsafe ? :UNSAFE : :DEFAULT
+          return doc.to_commonmark([mode] + COMMONMARKER_OPTIONS) unless format_html
+
           doc.to_html(([mode] + COMMONMARKER_OPTIONS), COMMONMARKER_EXTENSIONS)
         end
 
@@ -109,6 +114,25 @@ module Dependabot
           end
         end
 
+        def sanitize_nwo_text(doc)
+          doc.walk do |node|
+            if node.type == :text &&
+               node.string_content.match?(GITHUB_NWO_REGEX) &&
+               !parent_node_link?(node)
+              replace_nwo_node(node)
+            end
+          end
+        end
+
+        def replace_nwo_node(node)
+          match = node.string_content.match(GITHUB_NWO_REGEX)
+          repo = match.named_captures.fetch("repo")
+          number = match.named_captures.fetch("number")
+          new_node = build_nwo_text_node("#{repo}##{number}")
+          node.insert_before(new_node)
+          node.delete
+        end
+
         def replace_github_host(text)
           text.gsub(
             /(www\.)?github.com/, github_redirection_service || "github.com"
@@ -171,6 +195,12 @@ module Dependabot
           [code_node]
         end
 
+        def build_nwo_text_node(text)
+          code_node = CommonMarker::Node.new(:code)
+          code_node.string_content = text
+          code_node
+        end
+
         def create_link_node(url, text)
           link_node = CommonMarker::Node.new(:link)
           code_node = CommonMarker::Node.new(:code)
@@ -189,7 +219,7 @@ module Dependabot
         end
 
         def parent_node_link?(node)
-          node.type == :link || node.parent && parent_node_link?(node.parent)
+          node.type == :link || (node.parent && parent_node_link?(node.parent))
         end
       end
     end

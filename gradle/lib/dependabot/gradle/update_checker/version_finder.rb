@@ -112,42 +112,36 @@ module Dependabot
         end
 
         def filter_lower_versions(possible_versions)
-          return possible_versions unless dependency.version && version_class.correct?(dependency.version)
+          return possible_versions unless dependency.numeric_version
 
           possible_versions.select do |v|
-            v.fetch(:version) > version_class.new(dependency.version)
+            v.fetch(:version) > dependency.numeric_version
           end
         end
 
         def wants_prerelease?
-          return false unless dependency.version
-          return false unless version_class.correct?(dependency.version)
+          return false unless dependency.numeric_version
 
-          version_class.new(dependency.version).prerelease?
+          dependency.numeric_version.prerelease?
         end
 
         def wants_date_based_version?
-          return false unless dependency.version
-          return false unless version_class.correct?(dependency.version)
+          return false unless dependency.numeric_version
 
-          version_class.new(dependency.version) >= version_class.new(100)
+          dependency.numeric_version >= version_class.new(100)
         end
 
         def google_version_details
           url = Gradle::FileParser::RepositoriesFinder::GOOGLE_MAVEN_REPO
           group_id, artifact_id = group_and_artifact_ids
 
-          dependency_metadata_url = "#{Gradle::FileParser::RepositoriesFinder::GOOGLE_MAVEN_REPO}/"\
-                                    "#{group_id.tr('.', '/')}/"\
+          dependency_metadata_url = "#{Gradle::FileParser::RepositoriesFinder::GOOGLE_MAVEN_REPO}/" \
+                                    "#{group_id.tr('.', '/')}/" \
                                     "group-index.xml"
 
           @google_version_details ||=
             begin
-              response = Excon.get(
-                dependency_metadata_url,
-                idempotent: true,
-                **SharedHelpers.excon_defaults
-              )
+              response = Dependabot::RegistryClient.get(url: dependency_metadata_url)
               Nokogiri::XML(response.body)
             end
 
@@ -168,10 +162,9 @@ module Dependabot
           @dependency_metadata ||= {}
           @dependency_metadata[repository_details.hash] ||=
             begin
-              response = Excon.get(
-                dependency_metadata_url(repository_details.fetch("url")),
-                idempotent: true,
-                **Dependabot::SharedHelpers.excon_defaults(headers: repository_details.fetch("auth_headers"))
+              response = Dependabot::RegistryClient.get(
+                url: dependency_metadata_url(repository_details.fetch("url")),
+                headers: repository_details.fetch("auth_headers")
               )
               check_response(response, repository_details.fetch("url"))
               Nokogiri::XML(response.body)
@@ -190,7 +183,7 @@ module Dependabot
         end
 
         def check_response(response, repository_url)
-          return unless [401, 403].include?(response.status)
+          return unless response.status == 401 || response.status == 403
           return if @forbidden_urls.include?(repository_url)
           return if central_repo_urls.include?(repository_url)
 
@@ -282,10 +275,10 @@ module Dependabot
           group_id, artifact_id = group_and_artifact_ids
           group_id = "#{KOTLIN_PLUGIN_REPO_PREFIX}.#{group_id}" if kotlin_plugin?
 
-          "#{repository_url}/"\
-          "#{group_id.tr('.', '/')}/"\
-          "#{artifact_id}/"\
-          "maven-metadata.xml"
+          "#{repository_url}/" \
+            "#{group_id.tr('.', '/')}/" \
+            "#{artifact_id}/" \
+            "maven-metadata.xml"
         end
 
         def group_and_artifact_ids
@@ -315,7 +308,7 @@ module Dependabot
         end
 
         def version_class
-          Gradle::Version
+          dependency.version_class
         end
 
         def auth_headers_finder

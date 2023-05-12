@@ -1,10 +1,12 @@
 # frozen_string_literal: true
 
 require "excon"
+require "uri"
 
 require "dependabot/bundler/update_checker"
 require "dependabot/bundler/native_helpers"
 require "dependabot/bundler/helpers"
+require "dependabot/registry_client"
 require "dependabot/shared_helpers"
 require "dependabot/errors"
 
@@ -12,19 +14,15 @@ module Dependabot
   module Bundler
     class UpdateChecker
       module SharedBundlerHelpers
-        GIT_REGEX = /reset --hard [^\s]*` in directory (?<path>[^\s]*)/.freeze
-        GIT_REF_REGEX = /not exist in the repository (?<path>[^\s]*)\./.freeze
-        PATH_REGEX = /The path `(?<path>.*)` does not exist/.freeze
+        GIT_REGEX = /reset --hard [^\s]*` in directory (?<path>[^\s]*)/
+        GIT_REF_REGEX = /not exist in the repository (?<path>[^\s]*)\./
+        PATH_REGEX = /The path `(?<path>.*)` does not exist/
 
         module BundlerErrorPatterns
-          MISSING_AUTH_REGEX =
-            /bundle config (?<source>.*) username:password/.freeze
-          BAD_AUTH_REGEX =
-            /Bad username or password for (?<source>.*)\.$/.freeze
-          BAD_CERT_REGEX =
-            /verify the SSL certificate for (?<source>.*)\.$/.freeze
-          HTTP_ERR_REGEX =
-            /Could not fetch specs from (?<source>.*)$/.freeze
+          MISSING_AUTH_REGEX = /bundle config (?<source>.*) username:password/
+          BAD_AUTH_REGEX = /Bad username or password for (?<source>.*)\.$/
+          BAD_CERT_REGEX = /verify the SSL certificate for (?<source>.*)\.$/
+          HTTP_ERR_REGEX = /Could not fetch specs from (?<source>.*)$/
         end
 
         RETRYABLE_ERRORS = %w(
@@ -121,7 +119,8 @@ module Dependabot
             # We don't have access to one of repos required
             raise Dependabot::GitDependenciesNotReachable, bad_uris.uniq
           when "Bundler::GemNotFound", "Gem::InvalidSpecificationException",
-               "Bundler::VersionConflict", "Bundler::CyclicDependencyError"
+               "Bundler::VersionConflict", "Bundler::CyclicDependencyError",
+               "Bundler::SolveFailure"
             # Bundler threw an error during resolution. Any of:
             # - the gem doesn't exist in any of the specified sources
             # - the gem wasn't specified properly
@@ -143,7 +142,10 @@ module Dependabot
             regex = BundlerErrorPatterns::HTTP_ERR_REGEX
             if error.message.match?(regex)
               source = error.message.match(regex)[:source]
-              raise if source.end_with?("rubygems.org/")
+              raise if [
+                "rubygems.org",
+                "www.rubygems.org"
+              ].include?(URI(source).host)
 
               raise Dependabot::PrivateSourceTimedOut, source
             end
@@ -176,12 +178,10 @@ module Dependabot
             )
             git_specs.reject do |spec|
               uri = URI.parse(spec.fetch("auth_uri"))
-              next false unless %w(http https).include?(uri.scheme)
+              next false unless uri.scheme&.match?(/https?/o)
 
-              Excon.get(
-                uri.to_s,
-                idempotent: true,
-                **SharedHelpers.excon_defaults
+              Dependabot::RegistryClient.get(
+                url: uri.to_s
               ).status == 200
             rescue Excon::Error::Socket, Excon::Error::Timeout
               false
@@ -213,7 +213,7 @@ module Dependabot
             File.write(path, file.content)
           end
 
-          File.write(lockfile.name, sanitized_lockfile_body) if lockfile
+          File.write(lockfile.name, lockfile.content) if lockfile
         end
 
         def private_registry_credentials
@@ -229,12 +229,6 @@ module Dependabot
         def lockfile
           dependency_files.find { |f| f.name == "Gemfile.lock" } ||
             dependency_files.find { |f| f.name == "gems.locked" }
-        end
-
-        # TODO: Stop sanitizing the lockfile once we have bundler 2 installed
-        def sanitized_lockfile_body
-          re = FileUpdater::LockfileUpdater::LOCKFILE_ENDING
-          lockfile.content.gsub(re, "")
         end
       end
     end

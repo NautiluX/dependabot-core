@@ -68,7 +68,7 @@ RSpec.describe Dependabot::Python::FileUpdater::PipCompileFileUpdater do
   end
   let(:tmp_path) { Dependabot::Utils::BUMP_TMP_DIR_PATH }
 
-  before { Dir.mkdir(tmp_path) unless Dir.exist?(tmp_path) }
+  before { FileUtils.mkdir_p(tmp_path) }
 
   describe "#updated_dependency_files" do
     subject(:updated_files) { updater.updated_dependency_files }
@@ -519,6 +519,34 @@ RSpec.describe Dependabot::Python::FileUpdater::PipCompileFileUpdater do
         expect(updated_files.first.content).to include("cachecontrol==0.12.10")
         expect(updated_files.first.content).
           to_not include("cachecontrol[filecache]==")
+      end
+    end
+
+    context "with resolver backtracking header" do
+      let(:manifest_fixture_name) { "celery_extra_sqs.in" }
+      let(:generated_fixture_name) { "pip_compile_resolver_backtracking.txt" }
+      let(:dependency_name) { "celery" }
+      let(:dependency_version) { "5.2.7" }
+      let(:dependency_previous_version) { "5.2.6" }
+
+      it "adds pycurl as dependency" do
+        expect(updated_files.count).to eq(1)
+        expect(updated_files.first.content).to include("--resolver=backtracking")
+        expect(updated_files.first.content).to include("pycurl")
+      end
+    end
+
+    context "with resolver legacy header" do
+      let(:manifest_fixture_name) { "celery_extra_sqs.in" }
+      let(:generated_fixture_name) { "pip_compile_resolver_legacy.txt" }
+      let(:dependency_name) { "celery" }
+      let(:dependency_version) { "5.2.7" }
+      let(:dependency_previous_version) { "5.2.6" }
+
+      it "do not include pycurl" do
+        expect(updated_files.count).to eq(1)
+        expect(updated_files.first.content).to include("--resolver=legacy")
+        expect(updated_files.first.content).to_not include("pycurl")
       end
     end
   end

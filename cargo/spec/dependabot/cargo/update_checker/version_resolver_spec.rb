@@ -163,6 +163,21 @@ RSpec.describe Dependabot::Cargo::UpdateChecker::VersionResolver do
       end
     end
 
+    context "when using a toolchain that is too old" do
+      let(:toolchain_file) do
+        Dependabot::DependencyFile.new(
+          name: "rust-toolchain",
+          content: "[toolchain]\nchannel = \"1.67\"\n"
+        )
+      end
+      let(:unprepared_dependency_files) { [manifest, lockfile, toolchain_file] }
+
+      it "raises a helpful error" do
+        expect { subject }.
+          to raise_error(Dependabot::DependencyFileNotEvaluatable)
+      end
+    end
+
     context "using a feature that is not enabled" do
       let(:manifest_fixture_name) { "disabled_feature" }
       let(:lockfile_fixture_name) { "bare_version_specified" }
@@ -286,8 +301,8 @@ RSpec.describe Dependabot::Cargo::UpdateChecker::VersionResolver do
         let(:manifest_fixture_name) { "git_dependency_unreachable" }
         let(:lockfile_fixture_name) { "git_dependency_unreachable" }
         let(:git_url) do
-          "https://github.com/greysteil/utf8-ranges.git/info/"\
-          "refs?service=git-upload-pack"
+          "https://github.com/greysteil/utf8-ranges.git/info/" \
+            "refs?service=git-upload-pack"
         end
         let(:auth_header) { "Basic eC1hY2Nlc3MtdG9rZW46dG9rZW4=" }
 
@@ -547,6 +562,46 @@ RSpec.describe Dependabot::Cargo::UpdateChecker::VersionResolver do
       let(:unprepared_dependency_files) { project_dependency_files("version_conflict") }
 
       specify { expect(subject).to be_nil }
+    end
+
+    context "with an optional dependency" do
+      let(:manifest_fixture_name) { "bare_version_specified_as_optional" }
+      let(:unprepared_dependency_files) { [manifest] }
+
+      it { is_expected.to be >= Gem::Version.new("0.2.10") }
+    end
+
+    context "when attempting to resolve a subdependency of a path dependency" do
+      let(:path_dependency_manifest) do
+        Dependabot::DependencyFile.new(
+          name: "src/s3/Cargo.toml",
+          content: fixture("manifests", path_dependency_manifest_fixture_name)
+        )
+      end
+
+      let(:manifest_fixture_name) { "path_dependency" }
+      let(:path_dependency_manifest_fixture_name) { "cargo-registry-s3" }
+
+      let(:unprepared_dependency_files) { [manifest, path_dependency_manifest] }
+
+      let(:dependency_name) { "openssl" }
+      let(:dependency_version) { "0.10" }
+      let(:string_req) { "0.10" }
+
+      it { is_expected.to be >= Gem::Version.new("0.10.41") }
+
+      context "when the subdependency is optional" do
+        let(:path_dependency_manifest_fixture_name) { "cargo-registry-s3-ssl-optional" }
+
+        it { is_expected.to be_nil }
+      end
+
+      context "when the subdependency is optional but enabled by the parent" do
+        let(:manifest_fixture_name) { "path_dependency_feature_enabled" }
+        let(:path_dependency_manifest_fixture_name) { "cargo-registry-s3-ssl-optional" }
+
+        it { is_expected.to be >= Gem::Version.new("0.10.41") }
+      end
     end
   end
 end

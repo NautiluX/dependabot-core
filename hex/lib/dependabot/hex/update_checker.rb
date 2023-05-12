@@ -4,7 +4,7 @@ require "excon"
 require "dependabot/git_commit_checker"
 require "dependabot/update_checkers"
 require "dependabot/update_checkers/base"
-require "dependabot/shared_helpers"
+require "dependabot/registry_client"
 
 require "json"
 
@@ -231,7 +231,7 @@ module Dependabot
       # rubocop:enable Metrics/PerceivedComplexity
 
       def filter_lower_versions(versions_array)
-        return versions_array unless current_version && version_class.correct?(current_version)
+        return versions_array unless current_version
 
         versions_array.select do |version|
           version > current_version
@@ -243,23 +243,12 @@ module Dependabot
 
         @hex_registry_requested = true
 
-        response = Excon.get(
-          dependency_url,
-          idempotent: true,
-          **SharedHelpers.excon_defaults
-        )
-
+        response = Dependabot::RegistryClient.get(url: dependency_url)
         return unless response.status == 200
 
         @hex_registry_response = JSON.parse(response.body)
       rescue Excon::Error::Socket, Excon::Error::Timeout
         nil
-      end
-
-      def current_version
-        return unless dependency.version && version_class.correct?(dependency.version)
-
-        version_class.new(dependency.version)
       end
 
       def wants_prerelease?

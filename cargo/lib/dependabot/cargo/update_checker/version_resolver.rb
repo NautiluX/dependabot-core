@@ -11,14 +11,12 @@ module Dependabot
   module Cargo
     class UpdateChecker
       class VersionResolver
-        UNABLE_TO_UPDATE =
-          /Unable to update (?<url>.*?)$/.freeze
-        BRANCH_NOT_FOUND_REGEX =
-          /#{UNABLE_TO_UPDATE}.*to find branch `(?<branch>[^`]+)`/m.freeze
-        REVSPEC_PATTERN = /revspec '.*' not found/.freeze
-        OBJECT_PATTERN = /object not found - no match for id \(.*\)/.freeze
-        REF_NOT_FOUND_REGEX =
-          /#{UNABLE_TO_UPDATE}.*(#{REVSPEC_PATTERN}|#{OBJECT_PATTERN})/m.freeze
+        UNABLE_TO_UPDATE = /Unable to update (?<url>.*?)$/
+        BRANCH_NOT_FOUND_REGEX = /#{UNABLE_TO_UPDATE}.*to find branch `(?<branch>[^`]+)`/m
+        REVSPEC_PATTERN = /revspec '.*' not found/
+        OBJECT_PATTERN = /object not found - no match for id \(.*\)/
+        REF_NOT_FOUND_REGEX = /#{UNABLE_TO_UPDATE}.*(#{REVSPEC_PATTERN}|#{OBJECT_PATTERN})/m
+        GIT_REF_NOT_FOUND_REGEX = /Updating git repository `(?<url>[^`]*)`.*fatal: couldn't find remote ref/m
 
         def initialize(dependency:, credentials:,
                        original_dependency_files:, prepared_dependency_files:)
@@ -29,7 +27,9 @@ module Dependabot
         end
 
         def latest_resolvable_version
-          @latest_resolvable_version ||= fetch_latest_resolvable_version
+          return @latest_resolvable_version if defined?(@latest_resolvable_version)
+
+          @latest_resolvable_version = fetch_latest_resolvable_version
         end
 
         private
@@ -43,9 +43,7 @@ module Dependabot
             write_temporary_dependency_files
 
             SharedHelpers.with_git_configured(credentials: credentials) do
-              # Shell out to Cargo, which handles everything for us, and does
-              # so without doing an install (so it's fast).
-              run_cargo_command("cargo update -p #{dependency_spec} --verbose")
+              run_cargo_update_command
             end
 
             updated_version = fetch_version_from_new_lockfile
@@ -72,6 +70,8 @@ module Dependabot
             else
               versions.min_by { |p| version_class.new(p.fetch("version")) }
             end
+
+          return unless updated_version
 
           if git_dependency?
             updated_version.fetch("source").split("#").last
@@ -130,7 +130,16 @@ module Dependabot
           spec
         end
 
-        def run_cargo_command(command)
+        # Shell out to Cargo, which handles everything for us, and does
+        # so without doing an install (so it's fast).
+        def run_cargo_update_command
+          run_cargo_command(
+            "cargo update -p #{dependency_spec} --verbose",
+            fingerprint: "cargo update -p <dependency_spec> --verbose"
+          )
+        end
+
+        def run_cargo_command(command, fingerprint: nil)
           start = Time.now
           command = SharedHelpers.escape_command(command)
           stdout, process = Open3.capture2e(command)
@@ -144,6 +153,7 @@ module Dependabot
             message: stdout,
             error_context: {
               command: command,
+              fingerprint: fingerprint,
               time_taken: time_taken,
               process_exit_value: process.to_s
             }
@@ -163,11 +173,11 @@ module Dependabot
                        max_by { |f| f.name.length }
           return unless TomlRB.parse(cargo_toml.content)["workspace"]
 
-          msg = "This project is part of a Rust workspace but is not the "\
-                "workspace root."\
+          msg = "This project is part of a Rust workspace but is not the " \
+                "workspace root." \
 
           if cargo_toml.directory != "/"
-            msg += "Please update your settings so Dependabot points at the "\
+            msg += "Please update your settings so Dependabot points at the " \
                    "workspace root instead of #{cargo_toml.directory}."
           end
           raise Dependabot::DependencyFileNotResolvable, msg
@@ -175,7 +185,6 @@ module Dependabot
 
         # rubocop:disable Metrics/AbcSize
         # rubocop:disable Metrics/PerceivedComplexity
-        # rubocop:disable Metrics/MethodLength
         def handle_cargo_errors(error)
           if error.message.include?("does not have these features")
             # TODO: Ideally we should update the declaration not to ask
@@ -184,7 +193,7 @@ module Dependabot
           end
 
           if error.message.include?("authenticate when downloading repo") ||
-             error.message.include?("HTTP 200 response: got 401")
+             error.message.include?("fatal: Authentication failed for")
             # Check all dependencies for reachability (so that we raise a
             # consistent error)
             urls = unreachable_git_urls
@@ -200,17 +209,10 @@ module Dependabot
             raise Dependabot::GitDependenciesNotReachable, urls
           end
 
-          if error.message.match?(BRANCH_NOT_FOUND_REGEX)
-            dependency_url =
-              error.message.match(BRANCH_NOT_FOUND_REGEX).
-              named_captures.fetch("url").split(/[#?]/).first
-            raise Dependabot::GitDependencyReferenceNotFound, dependency_url
-          end
+          [BRANCH_NOT_FOUND_REGEX, REF_NOT_FOUND_REGEX, GIT_REF_NOT_FOUND_REGEX].each do |regex|
+            next unless error.message.match?(regex)
 
-          if error.message.match?(REF_NOT_FOUND_REGEX)
-            dependency_url =
-              error.message.match(REF_NOT_FOUND_REGEX).
-              named_captures.fetch("url").split(/[#?]/).first
+            dependency_url = error.message.match(regex).named_captures.fetch("url").split(/[#?]/).first
             raise Dependabot::GitDependencyReferenceNotFound, dependency_url
           end
 
@@ -235,13 +237,16 @@ module Dependabot
             return nil
           end
 
+          if error.message.include?("usage of sparse registries requires `-Z sparse-registry`")
+            raise Dependabot::DependencyFileNotEvaluatable, "Dependabot only supports toolchain 1.68 and up."
+          end
+
           raise Dependabot::DependencyFileNotResolvable, error.message if resolvability_error?(error.message)
 
           raise error
         end
         # rubocop:enable Metrics/AbcSize
         # rubocop:enable Metrics/PerceivedComplexity
-        # rubocop:enable Metrics/MethodLength
 
         def unreachable_git_urls
           return @unreachable_git_urls if defined?(@unreachable_git_urls)
@@ -298,7 +303,7 @@ module Dependabot
             write_temporary_dependency_files(prepared: false)
 
             SharedHelpers.with_git_configured(credentials: credentials) do
-              run_cargo_command("cargo update -p #{dependency_spec} --verbose")
+              run_cargo_update_command
             end
           end
 
@@ -421,7 +426,7 @@ module Dependabot
         end
 
         def version_class
-          Cargo::Version
+          dependency.version_class
         end
       end
     end

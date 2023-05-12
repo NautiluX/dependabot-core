@@ -3,6 +3,7 @@
 require "excon"
 require "dependabot/cargo/update_checker"
 require "dependabot/update_checkers/version_filters"
+require "dependabot/registry_client"
 
 module Dependabot
   module Cargo
@@ -67,10 +68,10 @@ module Dependabot
         end
 
         def filter_lower_versions(versions_array)
-          return versions_array unless dependency.version && version_class.correct?(dependency.version)
+          return versions_array unless dependency.numeric_version
 
           versions_array.
-            select { |version| version > version_class.new(dependency.version) }
+            select { |version| version > dependency.numeric_version }
         end
 
         def available_versions
@@ -83,26 +84,12 @@ module Dependabot
         def crates_listing
           return @crates_listing unless @crates_listing.nil?
 
-          response = Excon.get(
-            "https://crates.io/api/v1/crates/#{dependency.name}",
-            idempotent: true,
-            **SharedHelpers.excon_defaults
-          )
-
+          response = Dependabot::RegistryClient.get(url: "https://crates.io/api/v1/crates/#{dependency.name}")
           @crates_listing = JSON.parse(response.body)
-        rescue Excon::Error::Timeout
-          retrying ||= false
-          raise if retrying
-
-          retrying = true
-          sleep(rand(1.0..5.0)) && retry
         end
 
         def wants_prerelease?
-          if dependency.version &&
-             version_class.new(dependency.version).prerelease?
-            return true
-          end
+          return true if dependency.numeric_version&.prerelease?
 
           dependency.requirements.any? do |req|
             reqs = (req.fetch(:requirement) || "").split(",").map(&:strip)
@@ -115,13 +102,11 @@ module Dependabot
         end
 
         def version_class
-          Utils.version_class_for_package_manager(dependency.package_manager)
+          dependency.version_class
         end
 
         def requirement_class
-          Utils.requirement_class_for_package_manager(
-            dependency.package_manager
-          )
+          dependency.requirement_class
         end
       end
     end

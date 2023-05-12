@@ -121,19 +121,19 @@ module Dependabot
         end
 
         def filter_out_of_range_versions(versions_array)
-          reqs = dependency.requirements.map do |r|
+          reqs = dependency.requirements.filter_map do |r|
             NpmAndYarn::Requirement.requirements_array(r.fetch(:requirement))
-          end.compact
+          end
 
           versions_array.
             select { |v| reqs.all? { |r| r.any? { |o| o.satisfied_by?(v) } } }
         end
 
         def filter_lower_versions(versions_array)
-          return versions_array unless dependency.version && version_class.correct?(dependency.version)
+          return versions_array unless dependency.numeric_version
 
           versions_array.
-            select { |version, _| version > version_class.new(dependency.version) }
+            select { |version, _| version > dependency.numeric_version }
         end
 
         def version_from_dist_tags
@@ -159,13 +159,10 @@ module Dependabot
           wants_latest_dist_tag?(latest) ? latest : nil
         end
 
-        # rubocop:disable Metrics/PerceivedComplexity
         def related_to_current_pre?(version)
-          current_version = dependency.version
-          if current_version &&
-             version_class.correct?(current_version) &&
-             version_class.new(current_version).prerelease? &&
-             version_class.new(current_version).release == version.release
+          current_version = dependency.numeric_version
+          if current_version&.prerelease? &&
+             current_version&.release == version.release
             return true
           end
 
@@ -181,7 +178,6 @@ module Dependabot
             false
           end
         end
-        # rubocop:enable Metrics/PerceivedComplexity
 
         def specified_dist_tag_requirement?
           dependency.requirements.any? do |req|
@@ -204,10 +200,9 @@ module Dependabot
         end
 
         def current_version_greater_than?(version)
-          return false unless dependency.version
-          return false unless version_class.correct?(dependency.version)
+          return false unless dependency.numeric_version
 
-          version_class.new(dependency.version) > version
+          dependency.numeric_version > version
         end
 
         def current_requirement_greater_than?(version)
@@ -227,18 +222,16 @@ module Dependabot
 
           @yanked[version] =
             begin
-              status = Excon.get(
-                dependency_url + "/#{version}",
-                idempotent: true,
-                **SharedHelpers.excon_defaults(headers: registry_auth_headers)
+              status = Dependabot::RegistryClient.get(
+                url: dependency_url + "/#{version}",
+                headers: registry_auth_headers
               ).status
 
               if status == 404 && dependency_registry != "registry.npmjs.org"
                 # Some registries don't handle escaped package names properly
-                status = Excon.get(
-                  dependency_url.gsub("%2F", "/") + "/#{version}",
-                  idempotent: true,
-                  **SharedHelpers.excon_defaults(headers: registry_auth_headers)
+                status = Dependabot::RegistryClient.get(
+                  url: dependency_url.gsub("%2F", "/") + "/#{version}",
+                  headers: registry_auth_headers
                 ).status
               end
 
@@ -257,10 +250,9 @@ module Dependabot
 
           @version_endpoint_working =
             begin
-              Excon.get(
-                dependency_url + "/latest",
-                idempotent: true,
-                **SharedHelpers.excon_defaults(headers: registry_auth_headers)
+              Dependabot::RegistryClient.get(
+                url: dependency_url + "/latest",
+                headers: registry_auth_headers
               ).status < 400
             rescue Excon::Error::Timeout, Excon::Error::Socket
               # Give the benefit of the doubt if the registry is playing up
@@ -285,21 +277,16 @@ module Dependabot
               if git_dependency?
                 nil
               else
-                retry_count ||= 0
-                retry_count += 1
-                raise_npm_details_error(e) if retry_count > 2
-                sleep(rand(3.0..10.0)) && retry
+                raise_npm_details_error(e)
               end
             end
         end
 
         def fetch_npm_response
-          response = Excon.get(
-            dependency_url,
-            idempotent: true,
-            **SharedHelpers.excon_defaults(headers: registry_auth_headers)
+          response = Dependabot::RegistryClient.get(
+            url: dependency_url,
+            headers: registry_auth_headers
           )
-
           return response unless response.status == 500
           return response unless registry_auth_headers["Authorization"]
 
@@ -310,12 +297,12 @@ module Dependabot
           return unless decoded_token.include?(":")
 
           username, password = decoded_token.split(":")
-          Excon.get(
-            dependency_url,
-            user: username,
-            password: password,
-            idempotent: true,
-            **SharedHelpers.excon_defaults
+          Dependabot::RegistryClient.get(
+            url: dependency_url,
+            options: {
+              user: username,
+              password: password
+            }
           )
         end
 
@@ -352,11 +339,7 @@ module Dependabot
           if dependency_registry == "registry.npmjs.org"
             return false unless dependency.name.start_with?("@")
 
-            web_response = Excon.get(
-              "https://www.npmjs.com/package/#{dependency.name}",
-              idempotent: true,
-              **SharedHelpers.excon_defaults
-            )
+            web_response = Dependabot::RegistryClient.get(url: "https://www.npmjs.com/package/#{dependency.name}")
             # NOTE: returns 429 when the login page is rate limited
             return web_response.body.include?("Forgot password?") ||
                    web_response.status == 429
@@ -382,7 +365,8 @@ module Dependabot
             dependency: dependency,
             credentials: credentials,
             npmrc_file: npmrc_file,
-            yarnrc_file: yarnrc_file
+            yarnrc_file: yarnrc_file,
+            yarnrc_yml_file: yarnrc_yml_file
           )
         end
 
@@ -391,11 +375,11 @@ module Dependabot
         end
 
         def version_class
-          NpmAndYarn::Version
+          dependency.version_class
         end
 
         def requirement_class
-          NpmAndYarn::Requirement
+          dependency.requirement_class
         end
 
         def npmrc_file
@@ -404,6 +388,10 @@ module Dependabot
 
         def yarnrc_file
           dependency_files.find { |f| f.name.end_with?(".yarnrc") }
+        end
+
+        def yarnrc_yml_file
+          dependency_files.find { |f| f.name.end_with?(".yarnrc.yml") }
         end
 
         # TODO: Remove need for me

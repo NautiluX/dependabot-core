@@ -20,9 +20,16 @@ module Dependabot
         def releases_url
           return unless source
 
+          # Azure does not provide tags via API, so we can't check whether
+          # there are any releases. So, optimistically return the tags location
+          return "#{source.url}/tags" if source.provider == "azure"
+
+          # If there are no releases, we won't be linking to the releases page
+          return unless all_releases.any?
+
           case source.provider
           when "github" then "#{source.url}/releases"
-          when "gitlab", "azure" then "#{source.url}/tags"
+          when "gitlab" then "#{source.url}/tags"
           when "bitbucket", "codecommit" then nil
           else raise "Unexpected repo provider '#{source.provider}'"
           end
@@ -186,7 +193,7 @@ module Dependabot
         end
 
         def version_class
-          Utils.version_class_for_package_manager(dependency.package_manager)
+          dependency.version_class
         end
 
         def fetch_dependency_releases
@@ -194,8 +201,9 @@ module Dependabot
 
           case source.provider
           when "github" then fetch_github_releases
-          # Bitbucket doesn't support releases and Azure can't list API for annotated tags
-          when "bitbucket", "azure" then []
+          # Bitbucket and CodeCommit don't support releases and
+          # Azure can't list API for annotated tags
+          when "bitbucket", "azure", "codecommit" then []
           when "gitlab" then fetch_gitlab_releases
           else raise "Unexpected repo provider '#{source.provider}'"
           end
@@ -274,16 +282,16 @@ module Dependabot
         end
 
         def previous_ref
-          previous_refs = dependency.previous_requirements.map do |r|
+          previous_refs = dependency.previous_requirements.filter_map do |r|
             r.dig(:source, "ref") || r.dig(:source, :ref)
-          end.compact.uniq
+          end.uniq
           return previous_refs.first if previous_refs.count == 1
         end
 
         def new_ref
-          new_refs = dependency.requirements.map do |r|
+          new_refs = dependency.requirements.filter_map do |r|
             r.dig(:source, "ref") || r.dig(:source, :ref)
-          end.compact.uniq
+          end.uniq
           return new_refs.first if new_refs.count == 1
         end
 
@@ -299,7 +307,7 @@ module Dependabot
 
         def github_client
           @github_client ||= Dependabot::Clients::GithubWithRetries.
-                             for_github_dot_com(credentials: credentials)
+                             for_source(source: source, credentials: credentials)
         end
       end
     end

@@ -14,15 +14,15 @@ module Dependabot
         require "dependabot/file_parsers/base/dependency_set"
         require_relative "property_value_finder"
 
-        DEPENDENCY_SELECTOR = "ItemGroup > PackageReference, "\
-                              "ItemGroup > GlobalPackageReference, "\
-                              "ItemGroup > PackageVersion, "\
-                              "ItemGroup > Dependency, "\
+        DEPENDENCY_SELECTOR = "ItemGroup > PackageReference, " \
+                              "ItemGroup > GlobalPackageReference, " \
+                              "ItemGroup > PackageVersion, " \
+                              "ItemGroup > Dependency, " \
                               "ItemGroup > DevelopmentDependency"
 
-        PROJECT_SDK_REGEX   = %r{^([^/]+)/(\d+(?:[.]\d+(?:[.]\d+)?)?(?:[+-].*)?)$}.freeze
-        PROPERTY_REGEX      = /\$\((?<property>.*?)\)/.freeze
-        ITEM_REGEX          = /\@\((?<property>.*?)\)/.freeze
+        PROJECT_SDK_REGEX   = %r{^([^/]+)/(\d+(?:[.]\d+(?:[.]\d+)?)?(?:[+-].*)?)$}
+        PROPERTY_REGEX      = /\$\((?<property>.*?)\)/
+        ITEM_REGEX          = /\@\((?<property>.*?)\)/
 
         def initialize(dependency_files:)
           @dependency_files = dependency_files

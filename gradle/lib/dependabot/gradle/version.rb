@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
+require "dependabot/version"
 require "dependabot/utils"
-require "rubygems_version_patch"
 
 # Java versions use dots and dashes when tokenising their versions.
 # Gem::Version converts a "-" to ".pre.", so we override the `to_s` method.
@@ -10,7 +10,7 @@ require "rubygems_version_patch"
 
 module Dependabot
   module Gradle
-    class Version < Gem::Version
+    class Version < Dependabot::Version
       NULL_VALUES = %w(0 final ga).freeze
       PREFIXED_TOKEN_HIERARCHY = {
         "." => { qualifier: 1, number: 4 },
@@ -27,10 +27,10 @@ module Dependabot
         "sp" => 7
       }.freeze
       VERSION_PATTERN =
-        "[0-9a-zA-Z]+"\
-        '(?>\.[0-9a-zA-Z]*)*'\
+        "[0-9a-zA-Z]+" \
+        '(?>\.[0-9a-zA-Z]*)*' \
         '([_\-\+][0-9A-Za-z_-]*(\.[0-9A-Za-z_-]*)*)?'
-      ANCHORED_VERSION_PATTERN = /\A\s*(#{VERSION_PATTERN})?\s*\z/.freeze
+      ANCHORED_VERSION_PATTERN = /\A\s*(#{VERSION_PATTERN})?\s*\z/
 
       def self.correct?(version)
         return false if version.nil?
@@ -117,11 +117,11 @@ module Dependabot
       end
 
       def trim_version(version)
-        version.split("-").map do |v|
+        version.split("-").filter_map do |v|
           parts = v.split(".")
           parts = parts[0..-2] while NULL_VALUES.include?(parts&.last)
           parts&.join(".")
-        end.compact.reject(&:empty?).join("-")
+        end.reject(&:empty?).join("-")
       end
 
       def convert_dates(version, other_version)

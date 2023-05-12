@@ -53,7 +53,7 @@ RSpec.describe Dependabot::Composer::FileUpdater::LockfileUpdater do
   end
   let(:tmp_path) { Dependabot::Utils::BUMP_TMP_DIR_PATH }
 
-  before { Dir.mkdir(tmp_path) unless Dir.exist?(tmp_path) }
+  before { FileUtils.mkdir_p(tmp_path) }
 
   describe "the updated lockfile" do
     subject(:updated_lockfile_content) do
@@ -710,17 +710,6 @@ RSpec.describe Dependabot::Composer::FileUpdater::LockfileUpdater do
           }],
           package_manager: "composer"
         )
-      end
-
-      # This is a known issue in the composer-patches plugin and composer v2:
-      # https://github.com/cweagans/composer-patches/issues/338
-      pending "doesn't strip the patches" do
-        updated_dep = JSON.parse(updated_lockfile_content).
-                      fetch("packages").
-                      find { |p| p["name"] == "ehime/hello-world" }
-
-        expect(updated_dep.dig("extra", "patches_applied")).
-          to include("[PATCH] markdown modified")
       end
     end
 

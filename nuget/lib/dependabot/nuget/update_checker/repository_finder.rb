@@ -4,13 +4,14 @@ require "excon"
 require "nokogiri"
 require "dependabot/errors"
 require "dependabot/nuget/update_checker"
-require "dependabot/shared_helpers"
+require "dependabot/registry_client"
 
 module Dependabot
   module Nuget
     class UpdateChecker
       class RepositoryFinder
         DEFAULT_REPOSITORY_URL = "https://api.nuget.org/v3/index.json"
+        DEFAULT_REPOSITORY_API_KEY = "nuget.org"
 
         def initialize(dependency:, credentials:, config_files: [])
           @dependency  = dependency
@@ -30,7 +31,7 @@ module Dependabot
           @find_dependency_urls ||=
             known_repositories.flat_map do |details|
               if details.fetch(:url) == DEFAULT_REPOSITORY_URL
-                # Save a request for the default URL, since we already how
+                # Save a request for the default URL, since we already know how
                 # it addresses packages
                 next default_repository_details
               end
@@ -69,12 +70,9 @@ module Dependabot
         end
 
         def get_repo_metadata(repo_details)
-          Excon.get(
-            repo_details.fetch(:url),
-            idempotent: true,
-            **SharedHelpers.excon_defaults(
-              headers: auth_header_for_token(repo_details.fetch(:token))
-            )
+          Dependabot::RegistryClient.get(
+            url: repo_details.fetch(:url),
+            headers: auth_header_for_token(repo_details.fetch(:token))
           )
         end
 
@@ -154,25 +152,24 @@ module Dependabot
         def repos_from_config_file(config_file)
           doc = Nokogiri::XML(config_file.content)
           doc.remove_namespaces!
-          sources =
-            doc.css("configuration > packageSources > add").map do |node|
-              {
-                key:
-                  node.attribute("key")&.value&.strip ||
-                    node.at_xpath("./key")&.content&.strip,
-                url:
-                  node.attribute("value")&.value&.strip ||
-                    node.at_xpath("./value")&.content&.strip
-              }
-            end
+          # analogous to having a root config with the default repository
+          base_sources = [{ url: DEFAULT_REPOSITORY_URL, key: "nuget.org" }]
 
+          sources = []
+          doc.css("configuration > packageSources").children.each do |node|
+            if node.name == "clear"
+              sources.clear
+              base_sources.clear
+            else
+              key = node.attribute("key")&.value&.strip || node.at_xpath("./key")&.content&.strip
+              url = node.attribute("value")&.value&.strip || node.at_xpath("./value")&.content&.strip
+              sources << { url: url, key: key }
+            end
+          end
+          sources += base_sources # TODO: quirky overwrite behavior
           disabled_sources = disabled_sources(doc)
           sources.reject! do |s|
             disabled_sources.include?(s[:key])
-          end
-
-          unless doc.css("configuration > packageSources > clear").any?
-            sources << { url: DEFAULT_REPOSITORY_URL, key: nil }
           end
 
           sources.reject! do |s|
@@ -194,10 +191,10 @@ module Dependabot
         def default_repository_details
           {
             repository_url: DEFAULT_REPOSITORY_URL,
-            versions_url: "https://api.nuget.org/v3-flatcontainer/"\
-                             "#{dependency.name.downcase}/index.json",
-            search_url: "https://azuresearch-usnc.nuget.org/query"\
-                             "?q=#{dependency.name.downcase}&prerelease=true&semVerLevel=2.0.0",
+            versions_url: "https://api.nuget.org/v3-flatcontainer/" \
+                          "#{dependency.name.downcase}/index.json",
+            search_url: "https://azuresearch-usnc.nuget.org/query" \
+                        "?q=#{dependency.name.downcase}&prerelease=true&semVerLevel=2.0.0",
             auth_header: {},
             repository_type: "v3"
           }
@@ -205,7 +202,7 @@ module Dependabot
 
         # rubocop:disable Metrics/PerceivedComplexity
         def disabled_sources(doc)
-          doc.css("configuration > disabledPackageSources > add").map do |node|
+          doc.css("configuration > disabledPackageSources > add").filter_map do |node|
             value = node.attribute("value")&.value ||
                     node.at_xpath("./value")&.content
 
@@ -225,7 +222,7 @@ module Dependabot
             next source_details[:token] = nil if key.match?(/^\d/)
 
             tag = key.gsub(" ", "_x0020_")
-            creds_nodes = doc.css("configuration > packageSourceCredentials "\
+            creds_nodes = doc.css("configuration > packageSourceCredentials " \
                                   "> #{tag} > add")
 
             username =

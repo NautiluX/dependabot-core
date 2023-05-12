@@ -314,7 +314,7 @@ RSpec.describe Dependabot::PullRequestCreator::Labeler do
                 body: {
                   name: "security",
                   color: "ee0701",
-                  description: "Pull requests that address a security "\
+                  description: "Pull requests that address a security " \
                                "vulnerability"
                 }
               )
@@ -330,6 +330,40 @@ RSpec.describe Dependabot::PullRequestCreator::Labeler do
 
             expect(WebMock).
               to_not have_requested(:post, "#{repo_api_url}/labels")
+            expect(labeler.labels_for_pr).to include("security")
+          end
+        end
+      end
+    end
+
+    context "with Azure details" do
+      let(:source) do
+        Dependabot::Source.new(provider: "azure", repo: "gocardless/bump")
+      end
+
+      context "when the 'dependencies' label doesn't yet exist" do
+        it "creates a 'dependencies' label" do
+          labeler.create_default_labels_if_required
+
+          expect(labeler.labels_for_pr).to include("dependencies")
+        end
+      end
+
+      context "for an update that fixes a security vulnerability" do
+        let(:includes_security_fixes) { true }
+
+        context "when the 'security' label doesn't yet exist" do
+          it "creates a 'security' label" do
+            labeler.create_default_labels_if_required
+
+            expect(labeler.labels_for_pr).to include("security")
+          end
+        end
+
+        context "when a 'security' label already exist" do
+          it "does not creates a 'security' label" do
+            labeler.create_default_labels_if_required
+
             expect(labeler.labels_for_pr).to include("security")
           end
         end
@@ -370,7 +404,7 @@ RSpec.describe Dependabot::PullRequestCreator::Labeler do
           expect(WebMock).
             to have_requested(:post, "#{repo_api_url}/labels").
             with(
-              body: "description=Pull%20requests%20that%20update%20a"\
+              body: "description=Pull%20requests%20that%20update%20a" \
                     "%20dependency%20file&name=dependencies&color=%230366d6"
             )
           expect(labeler.labels_for_pr).to include("dependencies")
@@ -432,8 +466,8 @@ RSpec.describe Dependabot::PullRequestCreator::Labeler do
             expect(WebMock).
               to have_requested(:post, "#{repo_api_url}/labels").
               with(
-                body: "description=Pull%20requests%20that%20address%20a"\
-                    "%20security%20vulnerability&name=security&color=%23ee0701"
+                body: "description=Pull%20requests%20that%20address%20a" \
+                      "%20security%20vulnerability&name=security&color=%23ee0701"
               )
             expect(labeler.labels_for_pr).to include("security")
           end
@@ -679,6 +713,41 @@ RSpec.describe Dependabot::PullRequestCreator::Labeler do
       end
     end
 
+    context "with Azure details" do
+      let(:source) do
+        Dependabot::Source.new(provider: "azure", repo: "gocardless/bump")
+      end
+
+      context "when a 'dependencies' label exists" do
+        it { is_expected.to eq(["dependencies"]) }
+
+        context "for a security fix" do
+          let(:includes_security_fixes) { true }
+
+          it { is_expected.to eq(%w(dependencies security)) }
+        end
+      end
+
+      context "when a custom dependencies label exists" do
+        it { is_expected.to eq(["dependencies"]) }
+      end
+
+      context "when asking for custom labels" do
+        let(:custom_labels) { ["critical"] }
+        it { is_expected.to eq(["critical"]) }
+
+        context "that don't exist" do
+          let(:custom_labels) { ["non-existent"] }
+          it { is_expected.to eq(["non-existent"]) }
+        end
+
+        context "when only one doesn't exist" do
+          let(:custom_labels) { %w(critical non-existent) }
+          it { is_expected.to eq(%w(critical non-existent)) }
+        end
+      end
+    end
+
     context "with GitLab details" do
       let(:source) do
         Dependabot::Source.new(provider: "gitlab", repo: "gocardless/bump")
@@ -731,7 +800,7 @@ RSpec.describe Dependabot::PullRequestCreator::Labeler do
         let(:pagination_header) do
           {
             "Content-Type" => "application/json",
-            "Link" => "<#{repo_api_url}/labels?page=2&per_page=100>; "\
+            "Link" => "<#{repo_api_url}/labels?page=2&per_page=100>; " \
                       "rel=\"next\""
           }
         end

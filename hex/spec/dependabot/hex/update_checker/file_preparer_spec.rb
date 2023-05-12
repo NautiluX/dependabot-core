@@ -199,7 +199,7 @@ RSpec.describe Dependabot::Hex::UpdateChecker::FilePreparer do
 
         it "updates the pin" do
           expect(prepared_mixfile.content).to include(
-            '{:phoenix, ">= 0", github: "dependabot-fixtures/phoenix", '\
+            '{:phoenix, ">= 0", github: "dependabot-fixtures/phoenix", ' \
             'ref: "v1.2.1"}'
           )
         end
@@ -209,8 +209,8 @@ RSpec.describe Dependabot::Hex::UpdateChecker::FilePreparer do
 
           it "updates the pin" do
             expect(prepared_mixfile.content).to include(
-              '{:phoenix, ">= 0", github: "dependabot-fixtures/phoenix", '\
-              "ref: \'v1.2.1\'}"
+              '{:phoenix, ">= 0", github: "dependabot-fixtures/phoenix", ' \
+              "ref: 'v1.2.1'}"
             )
           end
         end

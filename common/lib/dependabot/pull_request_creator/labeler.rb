@@ -5,7 +5,7 @@ require "dependabot/pull_request_creator"
 module Dependabot
   class PullRequestCreator
     class Labeler
-      DEPENDENCIES_LABEL_REGEX = %r{^[^/]*dependenc[^/]+$}i.freeze
+      DEPENDENCIES_LABEL_REGEX = %r{^[^/]*dependenc[^/]+$}i
       DEFAULT_DEPENDENCIES_LABEL = "dependencies"
       DEFAULT_SECURITY_LABEL = "security"
 
@@ -105,7 +105,9 @@ module Dependabot
           new_version_parts = version(dep).split(/[.+]/)
           old_version_parts = previous_version(dep)&.split(/[.+]/) || []
           all_parts = new_version_parts.first(3) + old_version_parts.first(3)
+          # rubocop:disable Performance/RedundantEqualityComparisonBlock
           next 0 unless all_parts.all? { |part| part.to_i.to_s == part }
+          # rubocop:enable Performance/RedundantEqualityComparisonBlock
           next 1 if new_version_parts[0] != old_version_parts[0]
           next 2 if new_version_parts[1] != old_version_parts[1]
 
@@ -172,7 +174,11 @@ module Dependabot
       end
 
       def default_labels_for_pr
-        if custom_labels then custom_labels & labels
+        if custom_labels
+          # Azure does not have centralised labels
+          return custom_labels if source.provider == "azure"
+
+          custom_labels & labels
         else
           [
             default_dependencies_label,
@@ -269,7 +275,7 @@ module Dependabot
       end
 
       def fetch_azure_labels
-        langauge_name =
+        language_name =
           self.class.label_details_for_package_manager(package_manager).
           fetch(:name)
 
@@ -277,7 +283,7 @@ module Dependabot
           *@labels,
           DEFAULT_DEPENDENCIES_LABEL,
           DEFAULT_SECURITY_LABEL,
-          langauge_name
+          language_name
         ].uniq
       end
 
@@ -372,16 +378,16 @@ module Dependabot
       end
 
       def create_gitlab_language_label
-        langauge_name =
+        language_name =
           self.class.label_details_for_package_manager(package_manager).
           fetch(:name)
         gitlab_client_for_source.create_label(
           source.repo,
-          langauge_name,
+          language_name,
           "#" + self.class.label_details_for_package_manager(package_manager).
                 fetch(:colour)
         )
-        @labels = [*@labels, langauge_name].uniq
+        @labels = [*@labels, language_name].uniq
       end
 
       def github_client_for_source

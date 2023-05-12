@@ -20,16 +20,12 @@ module PackageManagerHelper
   end
 
   def self.bundler_version
-    use_bundler_2? ? "2.3.10" : "1.17.3"
-  end
-
-  def self.bundler_major_version
-    bundler_version.split(".").first
+    use_bundler_2? ? "2" : "1"
   end
 end
 
-def bundler_project_dependency_files(project)
-  project_dependency_files(File.join("bundler#{PackageManagerHelper.bundler_major_version}", project))
+def bundler_project_dependency_files(project, directory: "/")
+  project_dependency_files(File.join("bundler#{PackageManagerHelper.bundler_version}", project), directory: directory)
 end
 
 def bundler_project_dependency_file(project, filename:)
@@ -53,5 +49,13 @@ RSpec.configure do |config|
     else
       example.run
     end
+  end
+
+  config.after do
+    # Cleanup side effects from cloning git gems, so that they don't interfere
+    # with other specs.
+    helper_path = Dependabot::Bundler::NativeHelpers.versioned_helper_path(PackageManagerHelper.bundler_version)
+    FileUtils.rm_rf File.join(helper_path, ".bundle", "bundler")
+    FileUtils.rm_rf File.join(helper_path, ".bundle", "cache", "bundler", "git")
   end
 end

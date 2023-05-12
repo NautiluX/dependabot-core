@@ -112,8 +112,8 @@ RSpec.describe Dependabot::PullRequestCreator::PrNamePrefixer do
           Dependabot::Source.new(provider: "gitlab", repo: "gocardless/bump")
         end
         let(:watched_repo_url) do
-          "https://gitlab.com/api/v4/projects/"\
-          "#{CGI.escape(source.repo)}/repository"
+          "https://gitlab.com/api/v4/projects/" \
+            "#{CGI.escape(source.repo)}/repository"
         end
         let(:commits_response) { fixture("gitlab", "commits.json") }
         before do
@@ -225,6 +225,15 @@ RSpec.describe Dependabot::PullRequestCreator::PrNamePrefixer do
     end
 
     context "when commit_message_options are provided" do
+      before do
+        stub_request(:get, watched_repo_url + "/commits?per_page=100").
+          to_return(
+            status: 200,
+            body: commits_response,
+            headers: json_header
+          )
+      end
+      let(:commits_response) { fixture("github", "commits.json") }
       let(:commit_message_options) do
         {
           prefix: prefix,

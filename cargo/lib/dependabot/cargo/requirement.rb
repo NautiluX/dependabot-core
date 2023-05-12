@@ -16,7 +16,7 @@ module Dependabot
       version_pattern = Cargo::Version::VERSION_PATTERN
 
       PATTERN_RAW = "\\s*(#{quoted})?\\s*(#{version_pattern})\\s*"
-      PATTERN = /\A#{PATTERN_RAW}\z/.freeze
+      PATTERN = /\A#{PATTERN_RAW}\z/
 
       # Use Cargo::Version rather than Gem::Version to ensure that
       # pre-release versions aren't transformed.
@@ -33,7 +33,7 @@ module Dependabot
         [matches[1] || "=", Cargo::Version.new(matches[2])]
       end
 
-      # For consistency with other langauges, we define a requirements array.
+      # For consistency with other languages, we define a requirements array.
       # Rust doesn't have an `OR` separator for requirements, so it always
       # contains a single element.
       def self.requirements_array(requirement_string)

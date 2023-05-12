@@ -28,7 +28,7 @@ module Dependabot
       def updated_dependency_files
         updated_files = []
 
-        if go_mod && file_changed?(go_mod)
+        if go_mod && dependency_changed?(go_mod)
           updated_files <<
             updated_file(
               file: go_mod,
@@ -56,6 +56,11 @@ module Dependabot
 
       private
 
+      def dependency_changed?(go_mod)
+        # file_changed? only checks for changed requirements. Need to check for indirect dep version changes too.
+        file_changed?(go_mod) || dependencies.any? { |dep| dep.previous_version != dep.version }
+      end
+
       def check_required_files
         return if go_mod
 
@@ -70,7 +75,7 @@ module Dependabot
           dependency_files.each do |file|
             path = File.join(@repo_contents_path, directory, file.name)
             path = Pathname.new(path).expand_path
-            FileUtils.mkdir_p(path.dirname) unless Dir.exist?(path.dirname)
+            FileUtils.mkdir_p(path.dirname)
             File.write(path, file.content)
           end
 
@@ -112,6 +117,7 @@ module Dependabot
         @file_updater ||=
           GoModUpdater.new(
             dependencies: dependencies,
+            dependency_files: dependency_files,
             credentials: credentials,
             repo_contents_path: repo_contents_path,
             directory: directory,

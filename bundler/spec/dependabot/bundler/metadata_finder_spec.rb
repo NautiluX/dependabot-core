@@ -102,6 +102,11 @@ RSpec.describe Dependabot::Bundler::MetadataFinder do
             },
             {
               "type" => "rubygems_server",
+              "host" => "gems.greysteil.com.evil.com",
+              "token" => "secret:token"
+            },
+            {
+              "type" => "rubygems_server",
               "host" => "gems.greysteil.com",
               "token" => "secret:token"
             }
@@ -117,6 +122,60 @@ RSpec.describe Dependabot::Bundler::MetadataFinder do
         end
 
         it { is_expected.to eq("https://github.com/gocardless/business") }
+      end
+
+      context "with a replaces-base credential" do
+        before do
+          stub_request(:get, "https://gems.example.com/api/v1/gems/business.json").
+            to_return(
+              status: 200,
+              body: fixture("ruby", "rubygems_response.json")
+            )
+        end
+
+        let(:source) do
+          { type: "rubygems", url: "https://gems.example.com/" }
+        end
+        let(:credentials) do
+          [
+            {
+              "type" => "rubygems_server",
+              "host" => "gems.greysteil.com",
+              "replaces-base" => true
+            }
+          ]
+        end
+
+        it "prefers the source URL still" do
+          expect(finder.source_url).
+            to eq("https://github.com/gocardless/business")
+          expect(WebMock).
+            to have_requested(
+              :get,
+              "https://gems.example.com/api/v1/gems/business.json"
+            )
+          expect(WebMock).to_not have_requested(:get, rubygems_gemspec_url)
+        end
+
+        context "but with no source" do
+          let(:source) { nil }
+
+          before do
+            stub_request(:get, "https://gems.greysteil.com/api/v1/gems/business.json").
+              to_return(
+                status: 200,
+                body: fixture("ruby", "rubygems_response.json")
+              )
+          end
+
+          it "uses the replaces-base URL" do
+            expect(finder.source_url).
+              to eq("https://github.com/gocardless/business")
+            expect(WebMock).
+              to have_requested(:get, "https://gems.greysteil.com/api/v1/gems/business.json")
+            expect(WebMock).to_not have_requested(:get, rubygems_gemspec_url)
+          end
+        end
       end
 
       context "without a source" do
@@ -396,7 +455,7 @@ RSpec.describe Dependabot::Bundler::MetadataFinder do
 
         it "gets the URL from the changelog_uri" do
           expect(suggested_changelog_url).to eq(
-            "https://github.com/rails/rails/blob/v5.2.2/"\
+            "https://github.com/rails/rails/blob/v5.2.2/" \
             "activerecord/CHANGELOG.md"
           )
         end

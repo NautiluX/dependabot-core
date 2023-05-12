@@ -9,6 +9,7 @@ RSpec.describe Dependabot::GoModules::FileUpdater::GoModUpdater do
   let(:updater) do
     described_class.new(
       dependencies: [dependency],
+      dependency_files: dependency_files,
       credentials: credentials,
       repo_contents_path: repo_contents_path,
       directory: directory,
@@ -22,6 +23,7 @@ RSpec.describe Dependabot::GoModules::FileUpdater::GoModUpdater do
   let(:tidy) { true }
   let(:directory) { "/" }
   let(:goprivate) { "*" }
+  let(:dependency_files) { [] }
 
   let(:credentials) { [] }
 
@@ -38,6 +40,40 @@ RSpec.describe Dependabot::GoModules::FileUpdater::GoModUpdater do
 
   describe "#updated_go_mod_content" do
     subject(:updated_go_mod_content) { updater.updated_go_mod_content }
+
+    context "for a grouped update" do
+      let(:dependency_name) { "rsc.io/quote" }
+      let(:dependency_version) { "v1.5.2" }
+      let(:dependency_previous_version) { "v1.4.0" }
+      let(:requirements) { previous_requirements }
+      let(:previous_requirements) do
+        [{
+          file: "go.mod",
+          requirement: "v1.4.0",
+          groups: [],
+          source: {
+            type: "default",
+            source: "rsc.io/quote"
+          }
+        }]
+      end
+      let(:dependency_files) do
+        [
+          Dependabot::DependencyFile.new(
+            name: "go.mod",
+            # simulate a previous update from a grouped update
+            content: go_mod_content.gsub("rsc.io/qr v0.1.0", "rsc.io/qr v0.1.1")
+          )
+        ]
+      end
+
+      it "updated the dependency" do
+        is_expected.to include(%(rsc.io/quote v1.5.2\n))
+      end
+      it "retained the previous change" do
+        is_expected.to include(%(rsc.io/qr v0.1.1\n))
+      end
+    end
 
     context "for a top level dependency" do
       let(:dependency_name) { "rsc.io/quote" }
@@ -362,7 +398,9 @@ RSpec.describe Dependabot::GoModules::FileUpdater::GoModUpdater do
 
       before do
         allow(Open3).to receive(:capture3).and_call_original
-        allow(Open3).to receive(:capture3).with(anything, "go get").and_return(["", stderr, exit_status])
+        allow(Open3).to receive(:capture3).with(anything,
+                                                "go get github.com/spf13/viper@v1.7.1").and_return(["", stderr,
+                                                                                                    exit_status])
       end
 
       it { expect { subject }.to raise_error(Dependabot::DependencyFileNotResolvable, /The remote end hung up/) }
@@ -603,8 +641,8 @@ RSpec.describe Dependabot::GoModules::FileUpdater::GoModUpdater do
         expect { updater.updated_go_sum_content }.
           to raise_error(error_class) do |error|
           expect(error.message).to include(
-            "go: github.com/deislabs/oras@v0.9.0 requires\n"\
-            "	github.com/docker/distribution@v0.0.0-00010101000000-000000000000: "\
+            "go: github.com/deislabs/oras@v0.9.0 requires\n" \
+            "	github.com/docker/distribution@v0.0.0-00010101000000-000000000000: " \
             "invalid version: unknown revision"
           )
         end

@@ -9,17 +9,19 @@
     "test": "jest"
   },
   "dependencies": {
-    "@dependabot/yarn-lib": "^1.21.1",
-    "@npmcli/arborist": "^5.0.4",
+    "@dependabot/yarn-lib": "^1.22.19",
+    "@npmcli/arborist": "^6.2.7",
     "detect-indent": "^6.1.0",
-    "npm": "6.14.16",
-    "semver": "^7.3.4"
+    "nock": "^13.3.0",
+    "npm": "6.14.18",
+    "@pnpm/lockfile-file": "^8.0.2",
+    "@pnpm/dependency-path": "^2.1.1",
+    "semver": "^7.4.0"
   },
   "devDependencies": {
-    "eslint": "^8.7.0",
-    "eslint-config-prettier": "^8.3.0",
-    "jest": "^27.4.7",
-    "prettier": "^2.6.2",
-    "rimraf": "^3.0.2"
+    "eslint": "^8.39.0",
+    "eslint-config-prettier": "^8.8.0",
+    "jest": "^29.5.0",
+    "prettier": "^2.8.8"
   }
 }
