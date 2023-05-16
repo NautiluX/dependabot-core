@@ -4,7 +4,7 @@ module Dependabot
   module Composer
     module NativeHelpers
       def self.composer_helper_path(composer_version: "2")
-        File.join(composer_helpers_dir, "v" + composer_version, "bin/run")
+        File.join(composer_helpers_dir, "v#{composer_version}", "bin/run")
       end
 
       def self.composer_helpers_dir
