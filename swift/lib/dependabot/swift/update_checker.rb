@@ -3,11 +3,13 @@
 require "dependabot/update_checkers"
 require "dependabot/update_checkers/base"
 require "dependabot/git_commit_checker"
+require "dependabot/swift/native_requirement"
 require "dependabot/swift/file_updater/manifest_updater"
 
 module Dependabot
   module Swift
     class UpdateChecker < Dependabot::UpdateCheckers::Base
+      require_relative "update_checker/requirements_updater"
       require_relative "update_checker/version_resolver"
 
       def latest_version
@@ -31,10 +33,11 @@ module Dependabot
       end
 
       def updated_requirements
-        map_requirements do |requirement|
-          parsed_requirement = NativeRequirement.new(requirement[:metadata][:requirement_string])
-          parsed_requirement.bump_to_satisfy(preferred_resolvable_version)
-        end
+        RequirementsUpdater.new(
+          requirements: old_requirements,
+          target_version: preferred_resolvable_version,
+          update_strategy: requirements_update_strategy
+        ).updated_requirements
       end
 
       def requirements_unlocked_or_can_be?
@@ -53,17 +56,6 @@ module Dependabot
 
       def old_requirements
         dependency.requirements
-      end
-
-      def map_requirements
-        old_requirements.map do |old_requirement|
-          new_requirement = yield(old_requirement)
-
-          old_requirement.merge(
-            requirement: new_requirement.to_s,
-            metadata: { requirement_string: new_requirement.declaration }
-          )
-        end
       end
 
       def fetch_latest_version
@@ -96,14 +88,14 @@ module Dependabot
       end
 
       def unlocked_requirements
-        map_requirements do |_old_requirement|
-          NativeRequirement.new("\"#{dependency.version}\"...\"#{latest_version}\"")
+        NativeRequirement.map_requirements(old_requirements) do |_old_requirement|
+          "\"#{dependency.version}\"...\"#{latest_version}\""
         end
       end
 
       def force_lowest_security_fix_requirements
-        map_requirements do |_old_requirement|
-          NativeRequirement.new("exact: \"#{lowest_security_fix_version}\"")
+        NativeRequirement.map_requirements(old_requirements) do |_old_requirement|
+          "exact: \"#{lowest_security_fix_version}\""
         end
       end
 

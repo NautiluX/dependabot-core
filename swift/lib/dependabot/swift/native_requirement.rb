@@ -2,12 +2,25 @@
 
 require "dependabot/utils"
 require "dependabot/swift/requirement"
-require "dependabot/swift/version"
 
 module Dependabot
   module Swift
     class NativeRequirement
       attr_reader :declaration
+
+      def self.map_requirements(requirements)
+        requirements.map do |requirement|
+          declaration = new(requirement[:metadata][:requirement_string])
+
+          new_declaration = yield(declaration)
+          new_requirement = new(new_declaration)
+
+          requirement.merge(
+            requirement: new_requirement.to_s,
+            metadata: { requirement_string: new_declaration }
+          )
+        end
+      end
 
       def initialize(declaration)
         @declaration = declaration
@@ -23,26 +36,24 @@ module Dependabot
         requirement.to_s
       end
 
-      def bump_to_satisfy(str)
-        version = Version.new(str)
+      def update_if_needed(version)
+        return declaration if requirement.satisfied_by?(version)
 
-        return self if requirement.satisfied_by?(version)
+        update(version)
+      end
 
-        new_declaration = if up_to_next_major?
-          new_version = min.end_with?(".0.0") ? "#{version.segments.first}.0.0" : str
-          declaration.sub(min, new_version)
+      def update(version)
+        if up_to_next_major?
+          declaration.sub(min, version.to_s)
         elsif up_to_next_minor?
-          new_version = min.end_with?(".0") ? "#{version.segments.first}.#{version.segments.second}.0" : str
-          declaration.sub(min, new_version)
+          declaration.sub(min, version.to_s)
         elsif inclusive_range?
-          declaration.sub(max, str)
+          declaration.sub(max, version.to_s)
         elsif exclusive_range?
-          declaration.sub(max, bump_major(str))
+          declaration.sub(max, bump_major(version.to_s))
         elsif exact_version?
-          declaration.sub(min, str)
+          declaration.sub(min, version.to_s)
         end
-
-        self.class.new(new_declaration)
       end
 
       private
