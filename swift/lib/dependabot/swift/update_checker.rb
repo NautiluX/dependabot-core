@@ -22,6 +22,14 @@ module Dependabot
         raise NotImplementedError
       end
 
+      def lowest_security_fix_version
+        @lowest_security_fix_version ||= fetch_lowest_security_fix_version
+      end
+
+      def lowest_resolvable_security_fix_version
+        @lowest_resolvable_security_fix_version ||= fetch_lowest_resolvable_security_fix_version
+      end
+
       def updated_requirements
         map_requirements do |requirement|
           parsed_requirement = NativeRequirement.new(requirement[:metadata][:requirement_string])
@@ -64,34 +72,54 @@ module Dependabot
         latest_version_tag.fetch(:version)
       end
 
-      def fetch_latest_resolvable_version
-        version_resolver.latest_resolvable_version
+      def fetch_lowest_security_fix_version
+        return unless git_commit_checker.pinned_ref_looks_like_version? && latest_version_tag
+
+        lowest_security_fix_version_tag.fetch(:version)
       end
 
-      def version_resolver
+      def fetch_latest_resolvable_version
+        version_resolver_for(unlocked_requirements).latest_resolvable_version
+      end
+
+      def fetch_lowest_resolvable_security_fix_version
+        version_resolver_for(force_lowest_security_fix_requirements).latest_resolvable_version
+      end
+
+      def version_resolver_for(requirements)
         VersionResolver.new(
           dependency: dependency,
-          manifest: prepared_manifest,
+          manifest: prepare_manifest_for(requirements),
           repo_contents_path: repo_contents_path,
           credentials: credentials
         )
       end
 
-      def prepared_manifest
-        unprepared_manifest = dependency_files.find { |file| file.name == "Package.swift" }
-
-        unlocked_requirements = map_requirements do |_old_requirement|
+      def unlocked_requirements
+        map_requirements do |_old_requirement|
           NativeRequirement.new("\"#{dependency.version}\"...\"#{latest_version}\"")
         end
+      end
 
+      def force_lowest_security_fix_requirements
+        map_requirements do |_old_requirement|
+          NativeRequirement.new("exact: \"#{lowest_security_fix_version}\"")
+        end
+      end
+
+      def prepare_manifest_for(new_requirements)
         DependencyFile.new(
-          name: unprepared_manifest.name,
+          name: manifest.name,
           content: FileUpdater::ManifestUpdater.new(
-            unprepared_manifest.content,
+            manifest.content,
             old_requirements: old_requirements,
-            new_requirements: unlocked_requirements
+            new_requirements: new_requirements
           ).updated_manifest_content
         )
+      end
+
+      def manifest
+        @manifest ||= dependency_files.find { |file| file.name == "Package.swift" }
       end
 
       def latest_version_resolvable_with_full_unlock?
@@ -115,6 +143,25 @@ module Dependabot
 
       def latest_version_tag
         git_commit_checker.local_tag_for_latest_version
+      end
+
+      def lowest_security_fix_version_tag
+        tags = git_commit_checker.local_tags_for_allowed_versions
+        find_lowest_secure_version(tags)
+      end
+
+      def find_lowest_secure_version(tags)
+        relevant_tags = Dependabot::UpdateCheckers::VersionFilters.filter_vulnerable_versions(tags, security_advisories)
+        relevant_tags = filter_lower_tags(relevant_tags)
+
+        relevant_tags.min_by { |tag| tag.fetch(:version) }
+      end
+
+      def filter_lower_tags(tags_array)
+        return tags_array unless current_version
+
+        tags_array.
+          select { |tag| tag.fetch(:version) > current_version }
       end
     end
   end
