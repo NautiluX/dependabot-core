@@ -114,7 +114,12 @@ module Dependabot
       # This method **must** must return an Array when it errors
       #
       def compile_updates_for(dependency, dependency_files, group) # rubocop:disable Metrics/MethodLength
-        checker = update_checker_for(dependency, dependency_files, raise_on_ignored: raise_on_ignored?(dependency))
+        checker = update_checker_for(
+          dependency,
+          dependency_files,
+          group,
+          raise_on_ignored: raise_on_ignored?(dependency)
+        )
 
         log_checking_for_update(dependency)
 
@@ -139,7 +144,12 @@ module Dependabot
           requirements_to_unlock: requirements_to_unlock
         )
 
-        if peer_dependency_should_update_instead?(checker.dependency.name, dependency_files, updated_deps)
+        if peer_dependency_should_update_instead?(
+          checker.dependency.name,
+          dependency_files,
+          group,
+          updated_deps
+        )
           Dependabot.logger.info(
             "No update possible for #{dependency.name} #{dependency.version} (peer dependency can be updated)"
           )
@@ -170,18 +180,29 @@ module Dependabot
         job.ignore_conditions_for(dependency).any?
       end
 
-      def update_checker_for(dependency, dependency_files, raise_on_ignored:)
+      def update_checker_for(dependency, dependency_files, dependency_group, raise_on_ignored:)
         Dependabot::UpdateCheckers.for_package_manager(job.package_manager).new(
           dependency: dependency,
           dependency_files: dependency_files,
           repo_contents_path: job.repo_contents_path,
           credentials: job.credentials,
-          ignored_versions: job.ignore_conditions_for(dependency),
+          ignored_versions: ignored_versions_for(dependency, dependency_group),
           security_advisories: [], # FIXME: Version updates do not use advisory data for now
           raise_on_ignored: raise_on_ignored,
           requirements_update_strategy: job.requirements_update_strategy,
           options: job.experiments
         )
+      end
+
+      def ignored_versions_for(dependency, dependency_group)
+        # TODO: Rename job.ignore_conditions_for
+        #
+        # It returns verion ranges which implement IgnoreCondition objects' rules
+        # not the objects themselves so this is a little misleading.
+        versions_ignored_from_configuration = job.ignore_conditions_for(dependency)
+        versions_ignored_from_group = dependency_group.ignored_versions_for(dependency)
+
+        (versions_ignored_from_configuration + versions_ignored_from_group).uniq
       end
 
       def log_checking_for_update(dependency)
@@ -224,7 +245,7 @@ module Dependabot
 
       # If a version update for a peer dependency is possible we should
       # defer to the PR that will be created for it to avoid duplicate PRs.
-      def peer_dependency_should_update_instead?(dependency_name, dependency_files, updated_deps)
+      def peer_dependency_should_update_instead?(dependency_name, dependency_files, dependency_group, updated_deps)
         updated_deps.
           reject { |dep| dep.name == dependency_name }.
           any? do |dep|
@@ -234,7 +255,7 @@ module Dependabot
               requirements: dep.previous_requirements,
               package_manager: dep.package_manager
             )
-            update_checker_for(original_peer_dep, dependency_files, raise_on_ignored: false).
+            update_checker_for(original_peer_dep, dependency_files, dependency_group, raise_on_ignored: false).
               can_update?(requirements_to_unlock: :own)
           end
       end
