@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "dependabot/config/ignore_condition"
+require "dependabot/logger"
 
 require "wildcard_matcher"
 require "yaml"
@@ -9,6 +10,11 @@ module Dependabot
   class DependencyGroup
     ANY_DEPENDENCY_NAME = "*"
     SECURITY_UPDATES_ONLY = false
+
+    SEMVER_MAJOR = "major"
+    SEMVER_MINOR = "minor"
+    SEMVER_PATCH = "patch"
+    DEFAULT_SEMVER_LEVEL = SEMVER_MINOR
 
     class NullIgnoreCondition
       def ignored_versions(_dependency, _security_updates_only)
@@ -68,7 +74,7 @@ module Dependabot
     end
 
     def matches_dependency_type?(dependency)
-      return true unless dependency_type_rules? # If no dependency-type is set, match by default
+      return true unless rules.key?("dependency-type") # If no dependency-type is set, match by default
 
       rules["dependency-type"] == if dependency.production?
                                     "production"
@@ -81,16 +87,32 @@ module Dependabot
       rules.key?("patterns") && rules["patterns"]&.any?
     end
 
-    def dependency_type_rules?
-      rules.key?("dependency-type")
-    end
-
     def generate_ignore_condition!
-      return NullIgnoreCondition.new unless rules["update-types"]&.any?
+      highest_semver_allowed = rules.fetch("highest-semver-allowed", DEFAULT_SEMVER_LEVEL)
+      ignored_update_types = case highest_semver_allowed
+      when SEMVER_MAJOR
+        []
+      when SEMVER_MINOR
+        [
+          Dependabot::Config::IgnoreCondition::MAJOR_VERSION_TYPE
+        ]
+      when SEMVER_PATCH
+        [
+          Dependabot::Config::IgnoreCondition::MAJOR_VERSION_TYPE,
+          Dependabot::Config::IgnoreCondition::MINOR_VERSION_TYPE
+        ]
+      else
+        raise ArgumentError,
+              "The #{name} group has an unexpected value for highest-semver-allowed: #{rules["highest-semver-allowed"]}"
+      end
+
+      return NullIgnoreCondition.new unless ignored_update_types.any?
+
+      Dependabot.logger.debug("The #{name} group has set ignores for update-type(s): #{ignored_update_types}")
 
       Dependabot::Config::IgnoreCondition.new(
         dependency_name: ANY_DEPENDENCY_NAME,
-        update_types: Dependabot::Config::IgnoreCondition::VERSION_UPDATE_TYPES - rules["update-types"]
+        update_types: ignored_update_types
       )
     end
   end
