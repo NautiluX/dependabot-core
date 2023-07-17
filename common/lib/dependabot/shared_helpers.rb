@@ -315,20 +315,10 @@ module Dependabot
       FileUtils.mv(backup_path, GIT_CONFIG_GLOBAL_PATH)
     end
 
-    def self.run_shell_command(command,
-                               allow_unsafe_shell_command: false,
-                               env: {},
-                               fingerprint: nil,
-                               stderr_to_stdout: true)
+    def self.run_shell_command(command, allow_unsafe_shell_command: false, env: {}, fingerprint: nil)
       start = Time.now
       cmd = allow_unsafe_shell_command ? command : escape_command(command)
-
-      if stderr_to_stdout
-        stdout, process = Open3.capture2e(env || {}, cmd)
-      else
-        stdout, stderr, process = Open3.capture3(env || {}, cmd)
-      end
-
+      stdout, process = Open3.capture2e(env || {}, cmd)
       time_taken = Time.now - start
 
       # Raise an error with the output from the shell session if the
@@ -343,7 +333,7 @@ module Dependabot
       }
 
       raise SharedHelpers::HelperSubprocessFailed.new(
-        message: stderr_to_stdout ? stdout : "#{stderr}\n#{stdout}",
+        message: stdout,
         error_context: error_context
       )
     end
