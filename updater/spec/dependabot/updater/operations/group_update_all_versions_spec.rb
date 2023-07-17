@@ -471,7 +471,7 @@ RSpec.describe Dependabot::Updater::Operations::GroupUpdateAllVersions do
     end
 
     let(:dependency_files) do
-      original_bundler_files(fixture: "bundler_groups")
+      original_bundler_files(fixture: "bundler_grouped_by_types")
     end
 
     it "creates separate pull requests for development and production dependencies" do
@@ -485,12 +485,12 @@ RSpec.describe Dependabot::Updater::Operations::GroupUpdateAllVersions do
         gemfile = dependency_change.updated_dependency_files.find do |file|
           file.path == "/Gemfile"
         end
-        expect(gemfile.content).to eql(fixture("bundler_groups/updated_development_deps/Gemfile"))
+        expect(gemfile.content).to eql(fixture("bundler_grouped_by_types/updated_development_deps/Gemfile"))
 
         gemfile_lock = dependency_change.updated_dependency_files.find do |file|
           file.path == "/Gemfile.lock"
         end
-        expect(gemfile_lock.content).to eql(fixture("bundler_groups/updated_development_deps/Gemfile.lock"))
+        expect(gemfile_lock.content).to eql(fixture("bundler_grouped_by_types/updated_development_deps/Gemfile.lock"))
       end
 
       expect(mock_service).to receive(:create_pull_request) do |dependency_change|
@@ -503,12 +503,12 @@ RSpec.describe Dependabot::Updater::Operations::GroupUpdateAllVersions do
         gemfile = dependency_change.updated_dependency_files.find do |file|
           file.path == "/Gemfile"
         end
-        expect(gemfile.content).to eql(fixture("bundler_groups/updated_production_deps/Gemfile"))
+        expect(gemfile.content).to eql(fixture("bundler_grouped_by_types/updated_production_deps/Gemfile"))
 
         gemfile_lock = dependency_change.updated_dependency_files.find do |file|
           file.path == "/Gemfile.lock"
         end
-        expect(gemfile_lock.content).to eql(fixture("bundler_groups/updated_production_deps/Gemfile.lock"))
+        expect(gemfile_lock.content).to eql(fixture("bundler_grouped_by_types/updated_production_deps/Gemfile.lock"))
       end
 
       group_update_all.perform
