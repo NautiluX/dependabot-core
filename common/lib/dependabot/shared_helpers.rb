@@ -97,8 +97,9 @@ module Dependabot
         debugger # rubocop:disable Lint/Debugger
       end
 
-      env_cmd = [env, cmd].compact
-      stdout, stderr, process = Open3.capture3(*env_cmd, stdin_data: stdin_data)
+      env_cmd = [env, cmd, { stdin_data: stdin_data }].compact
+      stdout, stderr, process = capture_subprocess(*env_cmd, stderr_to_stdout: stderr_to_stdout)
+
       time_taken = Time.now - start
 
       if ENV["DEBUG_HELPERS"] == "true"
@@ -107,11 +108,6 @@ module Dependabot
         puts stdout
         puts stderr
       end
-
-      # Some package managers output useful stuff to stderr instead of stdout so
-      # we want to parse this, most package manager will output garbage here so
-      # would mess up json response from stdout
-      stdout = "#{stderr}\n#{stdout}" if stderr_to_stdout
 
       error_context = {
         command: command,
@@ -323,11 +319,8 @@ module Dependabot
       start = Time.now
       cmd = allow_unsafe_shell_command ? command : escape_command(command)
 
-      if stderr_to_stdout
-        stdout, process = Open3.capture2e(env || {}, cmd)
-      else
-        stdout, stderr, process = Open3.capture3(env || {}, cmd)
-      end
+      env_cmd = [env || {}, cmd]
+      stdout, stderr, process = capture_subprocess(*env_cmd, stderr_to_stdout: stderr_to_stdout)
 
       time_taken = Time.now - start
 
@@ -354,5 +347,19 @@ module Dependabot
       "$ cd #{Dir.pwd} && echo \"#{escaped_stdin_data}\" | #{env_keys}#{command}"
     end
     private_class_method :helper_subprocess_bash_command
+
+    def self.capture_subprocess(*cmd, stderr_to_stdout: true)
+      # Some package managers output useful stuff to stderr instead of stdout so
+      # we want to parse this, most package manager will output garbage here so
+      # would mess up json response from stdout
+      if stderr_to_stdout
+        all_output, process = Open3.capture2e(*cmd)
+
+        [all_output, nil, process]
+      else
+        Open3.capture3(*cmd)
+      end
+    end
+    private_class_method :capture_subprocess
   end
 end
