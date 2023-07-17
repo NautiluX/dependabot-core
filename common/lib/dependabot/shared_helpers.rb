@@ -318,7 +318,7 @@ module Dependabot
     def self.run_shell_command(command, allow_unsafe_shell_command: false, env: {}, fingerprint: nil)
       start = Time.now
       cmd = allow_unsafe_shell_command ? command : escape_command(command)
-      stdout, process = Open3.capture2e(env || {}, cmd)
+      stdout, stderr, process = Open3.capture3(env || {}, cmd)
       time_taken = Time.now - start
 
       # Raise an error with the output from the shell session if the
@@ -333,7 +333,7 @@ module Dependabot
       }
 
       raise SharedHelpers::HelperSubprocessFailed.new(
-        message: stdout,
+        message: stderr,
         error_context: error_context
       )
     end
