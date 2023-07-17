@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "dependabot/experiments"
 require "dependabot/config/ignore_condition"
 require "dependabot/logger"
 
@@ -74,6 +75,7 @@ module Dependabot
     end
 
     def matches_dependency_type?(dependency)
+      return true unless experimental_rules_enabled?
       return true unless rules.key?("dependency-type") # If no dependency-type is set, match by default
 
       rules["dependency-type"] == if dependency.production?
@@ -88,6 +90,8 @@ module Dependabot
     end
 
     def generate_ignore_condition!
+      return NullIgnoreCondition.new unless experimental_rules_enabled?
+
       highest_semver_allowed = rules.fetch("highest-semver-allowed", DEFAULT_SEMVER_LEVEL)
       ignored_update_types = case highest_semver_allowed
       when SEMVER_MAJOR
@@ -114,6 +118,10 @@ module Dependabot
         dependency_name: ANY_DEPENDENCY_NAME,
         update_types: ignored_update_types
       )
+    end
+
+    def experimental_rules_enabled?
+      Dependabot::Experiments.enabled?(:grouped_updates_experimental_rules)
     end
   end
 end

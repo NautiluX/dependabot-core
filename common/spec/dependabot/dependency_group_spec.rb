@@ -104,7 +104,7 @@ RSpec.describe Dependabot::DependencyGroup do
     end
   end
 
-  describe "#ignored_versions_for" do
+  describe "#ignored_versions_for with experimental rules enabled" do
     let(:dependency) do
       Dependabot::Dependency.new(
         name: "business",
@@ -114,6 +114,14 @@ RSpec.describe Dependabot::DependencyGroup do
           { file: "Gemfile", requirement: "~> 1.8.0", groups: [], source: nil }
         ]
       )
+    end
+
+    before do
+      Dependabot::Experiments.register(:grouped_updates_experimental_rules, true)
+    end
+
+    after do
+      Dependabot::Experiments.reset!
     end
 
     context "the group has not defined a highest-semver-allowed rule" do
@@ -182,6 +190,37 @@ RSpec.describe Dependabot::DependencyGroup do
     end
   end
 
+  describe "#ignored_versions_for with experimental rules disabled" do
+    let(:dependency) do
+      Dependabot::Dependency.new(
+        name: "business",
+        package_manager: "bundler",
+        version: "1.8.0",
+        requirements: [
+          { file: "Gemfile", requirement: "~> 1.8.0", groups: [], source: nil }
+        ]
+      )
+    end
+
+    context "the group has not defined a highest-semver-allowed rule" do
+      it "returns an empty array as nothing should be ignored" do
+        expect(dependency_group.ignored_versions_for(dependency)).to be_empty
+      end
+    end
+
+    context "the group has defined a highest-semver-allowed rule" do
+      let(:rules) do
+        {
+          "highest-semver-allowed" => "patch"
+        }
+      end
+
+      it "returns an empty array as nothing should be ignored" do
+        expect(dependency_group.ignored_versions_for(dependency)).to be_empty
+      end
+    end
+  end
+
   describe "#contains?" do
     context "when the rules include patterns" do
       let(:rules) do
@@ -238,22 +277,44 @@ RSpec.describe Dependabot::DependencyGroup do
       end
 
       it "returns true if the dependency matches the specified type" do
+        Dependabot::Experiments.register(:grouped_updates_experimental_rules, true)
+
         expect(dependency_group.contains?(production_dependency)).to be_truthy
+
+        Dependabot::Experiments.reset!
       end
 
       it "returns false if the dependency does not match the specified type" do
+        Dependabot::Experiments.register(:grouped_updates_experimental_rules, true)
+
         expect(dependency_group.contains?(test_dependency1)).to be_falsey
         expect(dependency_group.contains?(test_dependency2)).to be_falsey
+
+        Dependabot::Experiments.reset!
+      end
+
+      it "always returns true if the experimental rules are disabled" do
+        expect(dependency_group.contains?(production_dependency)).to be_truthy
+        expect(dependency_group.contains?(test_dependency1)).to be_truthy
+        expect(dependency_group.contains?(test_dependency2)).to be_truthy
       end
     end
 
-    context "when the rules specify a mix of dependency-types" do
+    context "when the rules specify a mix of patterns and dependency-types" do
       let(:rules) do
         {
           "patterns" => ["*dependency*"],
           "exclude-patterns" => ["*-2"],
           "dependency-type" => "development"
         }
+      end
+
+      before do
+        Dependabot::Experiments.register(:grouped_updates_experimental_rules, true)
+      end
+
+      after do
+        Dependabot::Experiments.reset!
       end
 
       it "returns true if the dependency matches the specified type and a pattern" do
